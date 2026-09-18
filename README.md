@@ -45,6 +45,15 @@ python3 main.py
     oración se convierte en un nodo.
   - Cada rama principal recibe un color distinto, aplicado también a sus
     conexiones, y luego se puede seguir editando manualmente.
+- **Deshacer / rehacer** (`Ctrl+Z` / `Ctrl+Y`, o menú *Editar*): revierte
+  cualquier acción (crear, mover, renombrar, cambiar colores, eliminar,
+  generar mapa desde texto, nuevo mapa, abrir archivo).
+- **Exportar como imagen** (barra de herramientas o *Archivo > Exportar como
+  imagen*): guarda el mapa como PNG. Requiere tener
+  [Ghostscript](https://ghostscript.com/) instalado en el sistema (o Pillow +
+  Ghostscript); si no están disponibles, guarda el mapa como PostScript
+  (`.ps`), que se puede abrir con GIMP, Vista previa (macOS) o convertir con
+  cualquier herramienta compatible.
 
 ## Estructura del proyecto
 

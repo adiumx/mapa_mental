@@ -1,7 +1,11 @@
 """Widget de canvas que dibuja y gestiona el mapa mental interactivo."""
 
+import copy
 import itertools
 import math
+import os
+import shutil
+import subprocess
 import tkinter as tk
 from tkinter import colorchooser, simpledialog
 from typing import Callable, Dict, Optional, Tuple
@@ -60,6 +64,11 @@ class MindMapCanvas(tk.Frame):
         self._connect_temp_line = None
         self._connect_source: Optional[int] = None
 
+        self.undo_stack: list = []
+        self.redo_stack: list = []
+        self._suspend_undo = False
+        self._max_undo = 50
+
         self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
         self.canvas.bind("<B1-Motion>", self._on_canvas_motion)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
@@ -86,10 +95,56 @@ class MindMapCanvas(tk.Frame):
         return tkfont.Font(family="Helvetica", size=11, weight="bold")
 
     # ------------------------------------------------------------------ #
+    # Deshacer / rehacer
+    # ------------------------------------------------------------------ #
+    def _snapshot_undo(self) -> None:
+        if self._suspend_undo:
+            return
+        self.undo_stack.append(copy.deepcopy(self.to_dict()))
+        if len(self.undo_stack) > self._max_undo:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def can_undo(self) -> bool:
+        return bool(self.undo_stack)
+
+    def can_redo(self) -> bool:
+        return bool(self.redo_stack)
+
+    def undo(self) -> None:
+        if not self.undo_stack:
+            self._set_status("No hay nada que deshacer.")
+            return
+        current = copy.deepcopy(self.to_dict())
+        state = self.undo_stack.pop()
+        self.redo_stack.append(current)
+        self._suspend_undo = True
+        try:
+            self._apply_dict(state)
+        finally:
+            self._suspend_undo = False
+        self._set_status("Acción deshecha.")
+
+    def redo(self) -> None:
+        if not self.redo_stack:
+            self._set_status("No hay nada que rehacer.")
+            return
+        current = copy.deepcopy(self.to_dict())
+        state = self.redo_stack.pop()
+        self.undo_stack.append(current)
+        self._suspend_undo = True
+        try:
+            self._apply_dict(state)
+        finally:
+            self._suspend_undo = False
+        self._set_status("Acción rehecha.")
+
+    # ------------------------------------------------------------------ #
     # Creación / dibujo de nodos
     # ------------------------------------------------------------------ #
     def new_node(self, x: Optional[float] = None, y: Optional[float] = None,
                  text: str = "Nueva idea", color: Optional[str] = None) -> Node:
+        self._snapshot_undo()
         if x is None or y is None:
             x = self.canvas.winfo_width() / 2 or 400
             y = self.canvas.winfo_height() / 2 or 300
@@ -151,14 +206,20 @@ class MindMapCanvas(tk.Frame):
     def delete_node(self, node_id: int) -> None:
         if node_id not in self.nodes:
             return
+        self._snapshot_undo()
         items = self.node_items.pop(node_id)
         self.canvas.delete(items["shape"])
         self.canvas.delete(items["text"])
         del self.nodes[node_id]
 
-        for conn_id in [c.id for c in self.connections.values()
-                         if c.source_id == node_id or c.target_id == node_id]:
-            self.delete_connection(conn_id)
+        previous_suspend = self._suspend_undo
+        self._suspend_undo = True
+        try:
+            for conn_id in [c.id for c in self.connections.values()
+                             if c.source_id == node_id or c.target_id == node_id]:
+                self.delete_connection(conn_id)
+        finally:
+            self._suspend_undo = previous_suspend
 
         if self.selected == ("node", node_id):
             self.selected = None
@@ -174,6 +235,7 @@ class MindMapCanvas(tk.Frame):
                for c in self.connections.values()):
             self._set_status("Esos nodos ya están conectados.")
             return None
+        self._snapshot_undo()
         conn = Connection(id=next(self._conn_id_seq), source_id=source_id, target_id=target_id)
         self.connections[conn.id] = conn
         self._draw_connection(conn)
@@ -203,6 +265,7 @@ class MindMapCanvas(tk.Frame):
     def delete_connection(self, conn_id: int) -> None:
         if conn_id not in self.connections:
             return
+        self._snapshot_undo()
         self.canvas.delete(self.conn_items.pop(conn_id))
         del self.connections[conn_id]
         if self.selected == ("conn", conn_id):
@@ -287,6 +350,7 @@ class MindMapCanvas(tk.Frame):
                     fill="#999999", width=2, dash=(4, 2),
                 )
             else:
+                self._snapshot_undo()
                 self._drag = {"mode": "move", "node_id": node_id,
                                "last_x": event.x, "last_y": event.y}
             return
@@ -390,6 +454,7 @@ class MindMapCanvas(tk.Frame):
             "Editar nodo", "Texto del nodo:", initialvalue=node.text, parent=self,
         )
         if new_text is not None and new_text.strip():
+            self._snapshot_undo()
             node.text = new_text.strip()
             self._redraw_node(node)
 
@@ -397,6 +462,7 @@ class MindMapCanvas(tk.Frame):
         node = self.nodes[node_id]
         _, hex_color = colorchooser.askcolor(color=node.color, title="Color del nodo", parent=self)
         if hex_color:
+            self._snapshot_undo()
             node.color = hex_color
             self._redraw_node(node)
 
@@ -404,11 +470,13 @@ class MindMapCanvas(tk.Frame):
         conn = self.connections[conn_id]
         _, hex_color = colorchooser.askcolor(color=conn.color, title="Color de la conexión", parent=self)
         if hex_color:
+            self._snapshot_undo()
             conn.color = hex_color
             self.canvas.itemconfig(self.conn_items[conn_id], fill=hex_color)
             self._set_status(f"Color de conexión cambiado a {hex_color}.")
 
     def change_connection_width(self, conn_id: int, delta: int) -> None:
+        self._snapshot_undo()
         conn = self.connections[conn_id]
         conn.line_width = max(1, min(10, conn.line_width + delta))
         selected = self.selected == ("conn", conn_id)
@@ -436,13 +504,18 @@ class MindMapCanvas(tk.Frame):
         if outline is None:
             return False
 
-        self.clear_all()
-        cx = self.canvas.winfo_width() / 2 or 500
-        cy = self.canvas.winfo_height() / 2 or 350
+        self._snapshot_undo()
+        self._suspend_undo = True
+        try:
+            self.clear_all()
+            cx = self.canvas.winfo_width() / 2 or 500
+            cy = self.canvas.winfo_height() / 2 or 350
 
-        root_node = self.new_node(x=cx, y=cy, text=outline.text, color="#2b3a4a")
-        self._place_outline_children(root_node, outline.children, cx, cy, 0, 2 * math.pi, level=1)
-        self.clear_selection()
+            root_node = self.new_node(x=cx, y=cy, text=outline.text, color="#2b3a4a")
+            self._place_outline_children(root_node, outline.children, cx, cy, 0, 2 * math.pi, level=1)
+            self.clear_selection()
+        finally:
+            self._suspend_undo = False
         self._set_status(f"Mapa generado con {len(self.nodes)} nodos a partir del texto.")
         return True
 
@@ -483,6 +556,14 @@ class MindMapCanvas(tk.Frame):
         }
 
     def load_dict(self, data: dict) -> None:
+        self._snapshot_undo()
+        self._suspend_undo = True
+        try:
+            self._apply_dict(data)
+        finally:
+            self._suspend_undo = False
+
+    def _apply_dict(self, data: dict) -> None:
         self.clear_all()
         max_node_id = 0
         for nd in data.get("nodes", []):
@@ -500,6 +581,20 @@ class MindMapCanvas(tk.Frame):
         self._node_id_seq = itertools.count(max_node_id + 1)
         self._conn_id_seq = itertools.count(max_conn_id + 1)
 
+    def reset_to_default(self, text: str = "Idea central", color: str = "#4a90d9") -> Node:
+        self._snapshot_undo()
+        self._suspend_undo = True
+        try:
+            self.clear_all()
+            node = self.new_node(
+                x=self.canvas.winfo_width() / 2 or 400,
+                y=self.canvas.winfo_height() / 2 or 300,
+                text=text, color=color,
+            )
+        finally:
+            self._suspend_undo = False
+        return node
+
     def clear_all(self) -> None:
         self.canvas.delete("all")
         self.nodes.clear()
@@ -509,3 +604,67 @@ class MindMapCanvas(tk.Frame):
         self.selected = None
         self._node_id_seq = itertools.count(1)
         self._conn_id_seq = itertools.count(1)
+
+    # ------------------------------------------------------------------ #
+    # Exportar como imagen
+    # ------------------------------------------------------------------ #
+    def export_image(self, path: str) -> str:
+        """Exporta el mapa a un archivo de imagen. Devuelve la ruta final escrita.
+
+        Siempre genera primero un PostScript (soportado nativamente por Tkinter).
+        Si se pidió un .png, intenta convertirlo con Ghostscript (si está en el
+        PATH) o con Pillow (si está instalado); si ninguno está disponible, deja
+        el archivo como PostScript (.ps) y lo informa mediante RuntimeError.
+        """
+        bbox = self.canvas.bbox("all")
+        if bbox is None:
+            raise ValueError("El mapa está vacío: no hay nada que exportar.")
+
+        x1, y1, x2, y2 = bbox
+        margin = 24
+        width = (x2 - x1) + 2 * margin
+        height = (y2 - y1) + 2 * margin
+
+        wants_png = path.lower().endswith(".png")
+        ps_path = path + ".tmp.ps" if wants_png else path
+
+        self.canvas.postscript(
+            file=ps_path, x=x1 - margin, y=y1 - margin,
+            width=width, height=height, colormode="color",
+        )
+
+        if not wants_png:
+            return path
+
+        gs_bin = (shutil.which("gs") or shutil.which("gswin64c")
+                  or shutil.which("gswin32c"))
+        if gs_bin:
+            try:
+                subprocess.run(
+                    [gs_bin, "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m",
+                     "-r150", f"-sOutputFile={path}", ps_path],
+                    check=True, capture_output=True,
+                )
+                os.remove(ps_path)
+                return path
+            except (subprocess.CalledProcessError, OSError):
+                pass
+
+        try:
+            from PIL import Image
+            img = Image.open(ps_path)
+            img.load(scale=3)
+            img.save(path, "png")
+            os.remove(ps_path)
+            return path
+        except Exception:
+            pass
+
+        fallback_path = path[:-4] + ".ps"
+        os.replace(ps_path, fallback_path)
+        raise RuntimeError(
+            "No se encontró Ghostscript ni Pillow en este equipo para generar el PNG.\n"
+            f"El mapa se guardó como PostScript en su lugar:\n{fallback_path}\n\n"
+            "Para exportar a PNG, instala Ghostscript (https://ghostscript.com/) "
+            "o Pillow (pip install Pillow) junto con Ghostscript."
+        )

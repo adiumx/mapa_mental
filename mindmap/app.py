@@ -43,9 +43,15 @@ class MindMapApp(tk.Tk):
         file_menu.add_command(label="Guardar como...", command=self.save_map_as)
         file_menu.add_separator()
         file_menu.add_command(label="Generar desde texto / Markdown...", command=self._import_text_dialog)
+        file_menu.add_command(label="Exportar como imagen...", command=self.export_image)
         file_menu.add_separator()
         file_menu.add_command(label="Salir", command=self._on_close)
         menubar.add_cascade(label="Archivo", menu=file_menu)
+
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Deshacer", command=self._undo, accelerator="Ctrl+Z")
+        edit_menu.add_command(label="Rehacer", command=self._redo, accelerator="Ctrl+Y")
+        menubar.add_cascade(label="Editar", menu=edit_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="Instrucciones", command=self._show_help)
@@ -56,11 +62,17 @@ class MindMapApp(tk.Tk):
         self.bind_all("<Control-n>", lambda e: self.new_map())
         self.bind_all("<Control-o>", lambda e: self.open_map())
         self.bind_all("<Control-s>", lambda e: self.save_map())
+        self.bind_all("<Control-z>", lambda e: self._undo())
+        self.bind_all("<Control-y>", lambda e: self._redo())
+        self.bind_all("<Control-Shift-Z>", lambda e: self._redo())
 
     def _build_toolbar(self):
         bar = ttk.Frame(self, padding=6)
         bar.pack(fill=tk.X)
 
+        ttk.Button(bar, text="Deshacer", command=self._undo).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="Rehacer", command=self._redo).pack(side=tk.LEFT, padx=3)
+        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(bar, text="+ Nodo", command=self._add_node_button).pack(side=tk.LEFT, padx=3)
         ttk.Button(bar, text="Renombrar", command=self._rename_button).pack(side=tk.LEFT, padx=3)
         ttk.Button(bar, text="Color de nodo", command=self._node_color_button).pack(side=tk.LEFT, padx=3)
@@ -73,6 +85,7 @@ class MindMapApp(tk.Tk):
         ttk.Button(bar, text="Abrir", command=self.open_map).pack(side=tk.LEFT, padx=3)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(bar, text="Texto → Mapa", command=self._import_text_dialog).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="Exportar imagen", command=self.export_image).pack(side=tk.LEFT, padx=3)
 
     def _build_status_bar(self):
         bar = ttk.Frame(self, padding=(8, 3))
@@ -92,9 +105,12 @@ class MindMapApp(tk.Tk):
             "• Shift + arrastrar desde un nodo a otro: crear una conexión\n"
             "• Clic en una conexión: seleccionarla\n"
             "• Clic derecho: menú con más opciones (color, grosor, eliminar)\n"
-            "• Tecla Supr: eliminar lo seleccionado\n\n"
+            "• Tecla Supr: eliminar lo seleccionado\n"
+            "• Ctrl+Z / Ctrl+Y: deshacer / rehacer\n\n"
             "Archivo > Generar desde texto / Markdown: pega texto o Markdown y conviértelo\n"
-            "automáticamente en un mapa mental gráfico (un nodo por oración, viñeta o título).",
+            "automáticamente en un mapa mental gráfico (un nodo por oración, viñeta o título).\n\n"
+            "Archivo > Exportar como imagen: guarda el mapa como PNG (requiere Ghostscript\n"
+            "o Pillow instalado en el sistema; si no están disponibles, se guarda como .ps).",
         )
 
     # ------------------------------------------------------------------ #
@@ -121,6 +137,12 @@ class MindMapApp(tk.Tk):
             messagebox.showinfo("Color de conexión", "Selecciona primero una conexión (clic sobre la línea).")
             return
         self.mind_canvas.change_connection_color(conn_id)
+
+    def _undo(self):
+        self.mind_canvas.undo()
+
+    def _redo(self):
+        self.mind_canvas.redo()
 
     def _delete_button(self):
         if self.mind_canvas.selected is None:
@@ -175,11 +197,10 @@ class MindMapApp(tk.Tk):
 
     # ------------------------------------------------------------------ #
     def new_map(self):
-        if not messagebox.askyesno("Nuevo mapa", "¿Crear un nuevo mapa? Se perderán los cambios sin guardar."):
+        if not messagebox.askyesno("Nuevo mapa", "¿Crear un nuevo mapa? Podrás deshacer esta acción con Ctrl+Z."):
             return
-        self.mind_canvas.clear_all()
+        self.mind_canvas.reset_to_default()
         self.current_file = None
-        self.mind_canvas.new_node(x=300, y=250, text="Idea central", color="#4a90d9")
         self._set_status("Nuevo mapa creado.")
 
     def save_map(self):
@@ -222,6 +243,26 @@ class MindMapApp(tk.Tk):
             self._set_status(f"Cargado {path}")
         except (OSError, json.JSONDecodeError) as exc:
             messagebox.showerror("Error al abrir", str(exc))
+
+    def export_image(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("Imagen PNG", "*.png"), ("PostScript", "*.ps")],
+            title="Exportar mapa como imagen",
+        )
+        if not path:
+            return
+        try:
+            final_path = self.mind_canvas.export_image(path)
+            self._set_status(f"Mapa exportado a {final_path}")
+            messagebox.showinfo("Exportar", f"Mapa exportado correctamente:\n{final_path}")
+        except RuntimeError as exc:
+            self._set_status("Exportado como PostScript (no se encontró Ghostscript/Pillow para PNG).")
+            messagebox.showwarning("Exportar", str(exc))
+        except ValueError as exc:
+            messagebox.showinfo("Exportar", str(exc))
+        except OSError as exc:
+            messagebox.showerror("Error al exportar", str(exc))
 
     def _on_close(self):
         self.destroy()
