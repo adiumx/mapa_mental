@@ -28,6 +28,7 @@ python3 main.py
 - **Doble clic en un espacio vacío**: crea un nodo nuevo.
 - **Doble clic sobre un nodo**: renombrarlo.
 - **Arrastrar un nodo**: moverlo por el lienzo.
+- **Rueda del mouse**: acercar o alejar (zoom), centrado en la posición del cursor.
 - **Botón "Conectar nodos"** (barra de herramientas): actívalo, haz clic en el nodo
   origen y luego en el destino para crear la conexión. También puedes mantener
   **Shift y arrastrar** de un nodo a otro, si lo prefieres.
@@ -49,11 +50,21 @@ python3 main.py
     oración se convierte en un nodo.
   - Cada rama principal recibe un color distinto, aplicado también a sus
     conexiones, y luego se puede seguir editando manualmente.
+- **Tema** (barra de herramientas): cambia el estilo visual de todo el mapa:
+  - *Cuadrados*: cajas redondeadas con relleno de color y texto blanco (por defecto).
+  - *Contorno*: cajas con fondo blanco, borde y texto del color de la rama.
+  - *Oscuro*: igual que Cuadrados, pero con el lienzo en fondo oscuro.
+  - *Ramas*: los nodos de rama son un punto de color con el texto al lado
+    (el nodo central sigue siendo una caja), para un estilo más ligero tipo
+    "árbol de ideas".
 - **Paleta de colores** (barra de herramientas): elige entre varios sets de
   colores (Vivo, Océano, Atardecer, Pastel, Clásico). Al seleccionar una, se
   recolorea todo el mapa actual por ramas (cada rama principal y sus
   descendientes reciben un color de la paleta) y se usa para los nodos que
   crees de ahí en adelante.
+- **Nueva paleta...**: crea tu propia paleta eligiendo 6 colores de rama y un
+  color para el nodo central; queda disponible en el selector de paletas
+  junto con las demás (se guarda solo durante la sesión actual).
 - **Deshacer / rehacer** (`Ctrl+Z` / `Ctrl+Y`, o menú *Editar*): revierte
   cualquier acción (crear, mover, renombrar, cambiar colores, eliminar,
   generar mapa desde texto, nuevo mapa, abrir archivo).

@@ -37,7 +37,18 @@ PALETTES = {
 }
 DEFAULT_PALETTE = "Vivo"
 
+THEMES = {
+    "Cuadrados": {"node": "box", "fill": "solid", "bg": "#f4f6f8"},
+    "Contorno": {"node": "box", "fill": "outline", "bg": "#ffffff"},
+    "Oscuro": {"node": "box", "fill": "solid", "bg": "#1e1e2e"},
+    "Ramas": {"node": "dot", "fill": "solid", "bg": "#ffffff"},
+}
+DEFAULT_THEME = "Cuadrados"
+
 SELECT_OUTLINE = "#ffd23f"
+
+MIN_ZOOM = 0.3
+MAX_ZOOM = 3.0
 
 
 def _rect_clearance(width, height, ux, uy):
@@ -66,7 +77,7 @@ def _rounded_rect_points(x1, y1, x2, y2, radius):
 
 
 class MindMapCanvas(tk.Frame):
-    """Canvas interactivo: arrastra nodos, crea conexiones y cambia sus colores."""
+    """Canvas interactivo: arrastra nodos, crea conexiones, cambia colores/tema y hace zoom."""
 
     def __init__(self, master, on_status: Optional[Callable[[str], None]] = None,
                  on_connect_mode_change: Optional[Callable[[bool], None]] = None, **kwargs):
@@ -74,18 +85,23 @@ class MindMapCanvas(tk.Frame):
         self.on_status = on_status or (lambda text: None)
         self.on_connect_mode_change = on_connect_mode_change or (lambda active: None)
 
-        self.canvas = tk.Canvas(self, bg="#f4f6f8", highlightthickness=0)
+        self.theme = DEFAULT_THEME
+        self.canvas = tk.Canvas(self, bg=THEMES[self.theme]["bg"], highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
         self.nodes: Dict[int, Node] = {}
         self.connections: Dict[int, Connection] = {}
-        self.node_items: Dict[int, Dict[str, int]] = {}
+        self.node_items: Dict[int, dict] = {}
         self.conn_items: Dict[int, int] = {}
 
         self._node_id_seq = itertools.count(1)
         self._conn_id_seq = itertools.count(1)
         self.palette_name = DEFAULT_PALETTE
         self._color_cycle = itertools.cycle(PALETTES[self.palette_name]["colors"])
+
+        self._zoom = 1.0
+        self._pan_x = 0.0
+        self._pan_y = 0.0
 
         self.selected: Optional[Tuple[str, int]] = None
         self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
@@ -107,11 +123,14 @@ class MindMapCanvas(tk.Frame):
         self.canvas.bind("<Delete>", lambda e: self.delete_selected())
         self.canvas.bind("<BackSpace>", lambda e: self.delete_selected())
         self.canvas.bind("<Escape>", lambda e: self._on_escape())
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Button-4>", self._on_mousewheel)
+        self.canvas.bind("<Button-5>", self._on_mousewheel)
         self.canvas.focus_set()
 
         self._set_status(
-            "Doble clic: crear nodo · Arrastrar: mover · Botón \"Conectar nodos\" (o "
-            "Shift + arrastrar): crear una conexión · Clic derecho: opciones"
+            "Doble clic: crear nodo · Arrastrar: mover · Rueda del mouse: zoom · Botón "
+            "\"Conectar nodos\" (o Shift + arrastrar): crear una conexión · Clic derecho: opciones"
         )
 
     # ------------------------------------------------------------------ #
@@ -120,21 +139,51 @@ class MindMapCanvas(tk.Frame):
     def _set_status(self, text: str) -> None:
         self.on_status(text)
 
-    def _font(self, node: Optional[Node] = None):
+    def _font(self, node: Optional[Node] = None, scale: float = 1.0):
         import tkinter.font as tkfont
-        size = 16 if (node and node.shape == "root") else 12
+        base_size = 16 if (node and node.shape == "root") else 12
+        size = max(6, round(base_size * scale))
         return tkfont.Font(family="Helvetica", size=size, weight="bold")
+
+    def _to_screen(self, x: float, y: float) -> Tuple[float, float]:
+        return x * self._zoom + self._pan_x, y * self._zoom + self._pan_y
+
+    def _to_model(self, x: float, y: float) -> Tuple[float, float]:
+        return (x - self._pan_x) / self._zoom, (y - self._pan_y) / self._zoom
 
     def _canvas_center(self) -> Tuple[float, float]:
         w = self.canvas.winfo_width()
         h = self.canvas.winfo_height()
-        cx = w / 2 if w > 1 else 400
-        cy = h / 2 if h > 1 else 300
-        return cx, cy
+        sx = w / 2 if w > 1 else 400
+        sy = h / 2 if h > 1 else 300
+        return self._to_model(sx, sy)
 
     def _on_escape(self) -> None:
         self._connect_first_node = None
         self.clear_selection()
+
+    # ------------------------------------------------------------------ #
+    # Zoom con la rueda del mouse
+    # ------------------------------------------------------------------ #
+    def _on_mousewheel(self, event) -> None:
+        delta = getattr(event, "delta", 0)
+        if delta:
+            factor = 1.1 if delta > 0 else (1 / 1.1)
+        else:
+            factor = 1.1 if getattr(event, "num", 5) == 4 else (1 / 1.1)
+        self._zoom_at(event.x, event.y, factor)
+
+    def _zoom_at(self, screen_x: float, screen_y: float, factor: float) -> None:
+        old_zoom = self._zoom
+        new_zoom = min(MAX_ZOOM, max(MIN_ZOOM, old_zoom * factor))
+        if abs(new_zoom - old_zoom) < 1e-9:
+            return
+        applied = new_zoom / old_zoom
+        self._pan_x = screen_x - (screen_x - self._pan_x) * applied
+        self._pan_y = screen_y - (screen_y - self._pan_y) * applied
+        self._zoom = new_zoom
+        self._redraw_all()
+        self._set_status(f"Zoom: {round(self._zoom * 100)}%")
 
     # ------------------------------------------------------------------ #
     # Modo conectar (clic en origen, clic en destino)
@@ -173,8 +222,37 @@ class MindMapCanvas(tk.Frame):
         self.new_connection(source_id, node_id)
 
     # ------------------------------------------------------------------ #
+    # Tema visual
+    # ------------------------------------------------------------------ #
+    def set_theme(self, name: str) -> None:
+        if name not in THEMES:
+            return
+        self.theme = name
+        self.canvas.config(bg=THEMES[name]["bg"])
+        self._redraw_all()
+        self._set_status(f'Tema "{name}" aplicado.')
+
+    def _redraw_all(self) -> None:
+        for node in list(self.nodes.values()):
+            self._redraw_node(node)
+        self._redraw_all_connections()
+
+    def _redraw_all_connections(self) -> None:
+        for conn in self.connections.values():
+            item = self.conn_items.get(conn.id)
+            if item is None:
+                continue
+            self.canvas.coords(item, *self._connection_line_points(conn))
+            selected = self.selected == ("conn", conn.id)
+            width = conn.line_width * self._zoom + (3 if selected else 0)
+            self.canvas.itemconfig(item, width=max(1, width))
+
+    # ------------------------------------------------------------------ #
     # Paleta de colores
     # ------------------------------------------------------------------ #
+    def add_custom_palette(self, name: str, colors: list, accent: str) -> None:
+        PALETTES[name] = {"colors": list(colors), "accent": accent}
+
     def apply_palette(self, name: str, recolor_existing: bool = True) -> None:
         if name not in PALETTES:
             return
@@ -291,9 +369,16 @@ class MindMapCanvas(tk.Frame):
         return node
 
     def _draw_node(self, node: Node) -> None:
-        font = self._font(node)
+        theme = THEMES[self.theme]
+        if theme["node"] == "dot" and node.shape != "root":
+            self._draw_node_dot(node)
+        else:
+            self._draw_node_box(node, theme)
+
+    def _draw_node_box(self, node: Node, theme: dict) -> None:
+        base_font = self._font(node)
         lines = node.text.split("\n") or [""]
-        text_w = max(font.measure(line) for line in lines)
+        text_w = max(base_font.measure(line) for line in lines)
         is_root = node.shape == "root"
         text_h = (26 if is_root else 20) * len(lines)
         pad_x, pad_y = (34, 20) if is_root else (16, 10)
@@ -302,32 +387,96 @@ class MindMapCanvas(tk.Frame):
 
         node.width = max(min_w, text_w + 2 * pad_x)
         node.height = max(min_h, text_h + 2 * pad_y)
-        x1, y1 = node.x - node.width / 2, node.y - node.height / 2
-        x2, y2 = node.x + node.width / 2, node.y + node.height / 2
-        radius = min(18, node.height / 2)
+
+        zoom = self._zoom
+        sx, sy = self._to_screen(node.x, node.y)
+        sw, sh = node.width * zoom, node.height * zoom
+        x1, y1 = sx - sw / 2, sy - sh / 2
+        x2, y2 = sx + sw / 2, sy + sh / 2
+        radius = min(18 * zoom, sh / 2)
+
+        outline_mode = theme["fill"] == "outline"
+        fill_color = "#ffffff" if outline_mode else node.color
+        outline_color = node.color if outline_mode else ""
+        outline_width = max(2, round(3 * zoom)) if outline_mode else 0
+        text_color = node.color if outline_mode else "#ffffff"
 
         shape_item = self.canvas.create_polygon(
             _rounded_rect_points(x1, y1, x2, y2, radius),
-            fill=node.color, outline="", width=0, smooth=True, splinesteps=8,
-            tags=("node", tag),
+            fill=fill_color, outline=outline_color, width=outline_width,
+            smooth=True, splinesteps=8, tags=("node", tag),
         )
+        render_font = self._font(node, scale=zoom)
         text_item = self.canvas.create_text(
-            node.x, node.y, text=node.text, fill="#ffffff",
-            font=font, tags=("node", "node-text", tag),
-            width=node.width - 2 * pad_x, justify="center",
+            sx, sy, text=node.text, fill=text_color,
+            font=render_font, tags=("node", "node-text", tag),
+            width=max(1, sw - 2 * pad_x * zoom), justify="center",
         )
-        self.node_items[node.id] = {"shape": shape_item, "text": text_item}
+        self.node_items[node.id] = {
+            "shape": shape_item, "text": text_item,
+            "outline": (outline_color, outline_width),
+        }
+        self.canvas.tag_bind(tag, "<Enter>", lambda e: self.canvas.config(cursor="fleur"))
+        self.canvas.tag_bind(tag, "<Leave>", lambda e: self.canvas.config(cursor=""))
 
-        for t in (shape_item, text_item):
-            self.canvas.tag_bind(t, "<Enter>", lambda e: self.canvas.config(cursor="fleur"))
-            self.canvas.tag_bind(t, "<Leave>", lambda e: self.canvas.config(cursor=""))
+    def _draw_node_dot(self, node: Node) -> None:
+        base_font = self._font(node)
+        lines = node.text.split("\n") or [""]
+        text_w = max(base_font.measure(line) for line in lines)
+        text_h = 18 * len(lines)
+        tag = f"nid_{node.id}"
+
+        dot_r_base = 7
+        gap_base = dot_r_base + 8
+        side = self._dot_text_side(node)
+
+        node.width = text_w + gap_base + dot_r_base
+        node.height = max(20, text_h)
+
+        zoom = self._zoom
+        sx, sy = self._to_screen(node.x, node.y)
+        dot_r = dot_r_base * zoom
+        gap = gap_base * zoom
+
+        anchor = "w" if side == "right" else "e"
+        text_x = sx + gap if side == "right" else sx - gap
+
+        shape_item = self.canvas.create_oval(
+            sx - dot_r, sy - dot_r, sx + dot_r, sy + dot_r,
+            fill=node.color, outline="", tags=("node", tag),
+        )
+        render_font = self._font(node, scale=zoom)
+        text_item = self.canvas.create_text(
+            text_x, sy, text=node.text, fill=node.color,
+            font=render_font, tags=("node", "node-text", tag),
+            anchor=anchor, justify="left" if anchor == "w" else "right",
+        )
+        self.node_items[node.id] = {
+            "shape": shape_item, "text": text_item,
+            "outline": ("", 0),
+        }
+        self.canvas.tag_bind(tag, "<Enter>", lambda e: self.canvas.config(cursor="fleur"))
+        self.canvas.tag_bind(tag, "<Leave>", lambda e: self.canvas.config(cursor=""))
+
+    def _incoming_connection(self, node_id: int) -> Optional[Connection]:
+        for conn in self.connections.values():
+            if conn.target_id == node_id:
+                return conn
+        return None
+
+    def _dot_text_side(self, node: Node) -> str:
+        incoming = self._incoming_connection(node.id)
+        if incoming is None:
+            return "right"
+        parent = self.nodes.get(incoming.source_id)
+        if parent is None:
+            return "right"
+        return "right" if node.x >= parent.x else "left"
 
     def _redraw_node(self, node: Node) -> None:
-        old_items = self.node_items.get(node.id)
         was_selected = self.selected == ("node", node.id)
-        if old_items:
-            self.canvas.delete(old_items["shape"])
-            self.canvas.delete(old_items["text"])
+        self.canvas.delete(f"nid_{node.id}")
+        self.node_items.pop(node.id, None)
         self._draw_node(node)
         if was_selected:
             self.selected = ("node", node.id)
@@ -335,11 +484,16 @@ class MindMapCanvas(tk.Frame):
         self._update_connections_for_node(node.id)
 
     def _apply_node_selection_style(self, node_id: int, selected: bool) -> None:
-        shape_item = self.node_items[node_id]["shape"]
-        self.canvas.itemconfig(
-            shape_item, outline=SELECT_OUTLINE if selected else "",
-            width=3 if selected else 0,
-        )
+        items = self.node_items[node_id]
+        shape_item = items["shape"]
+        default_color, default_width = items.get("outline", ("", 0))
+        if selected:
+            self.canvas.itemconfig(
+                shape_item, outline=SELECT_OUTLINE,
+                width=max(default_width, round(2 * self._zoom)) + 1,
+            )
+        else:
+            self.canvas.itemconfig(shape_item, outline=default_color, width=default_width)
 
     def toggle_node_shape(self, node_id: int) -> None:
         node = self.nodes[node_id]
@@ -351,9 +505,8 @@ class MindMapCanvas(tk.Frame):
         if node_id not in self.nodes:
             return
         self._snapshot_undo()
-        items = self.node_items.pop(node_id)
-        self.canvas.delete(items["shape"])
-        self.canvas.delete(items["text"])
+        self.canvas.delete(f"nid_{node_id}")
+        self.node_items.pop(node_id, None)
         del self.nodes[node_id]
 
         previous_suspend = self._suspend_undo
@@ -386,13 +539,17 @@ class MindMapCanvas(tk.Frame):
         )
         self.connections[conn.id] = conn
         self._draw_connection(conn)
+        if THEMES[self.theme]["node"] == "dot":
+            # el lado del texto del destino puede depender de dónde quedó el origen
+            self._redraw_node(self.nodes[target_id])
         self.select_connection(conn.id)
         return conn
 
     def _connection_line_points(self, conn: Connection):
         a = self.nodes[conn.source_id]
         b = self.nodes[conn.target_id]
-        x1, y1, x2, y2 = a.x, a.y, b.x, b.y
+        x1, y1 = self._to_screen(a.x, a.y)
+        x2, y2 = self._to_screen(b.x, b.y)
         dist = math.hypot(x2 - x1, y2 - y1) or 1
         px, py = -(y2 - y1) / dist, (x2 - x1) / dist
         offset = dist * 0.15
@@ -404,7 +561,7 @@ class MindMapCanvas(tk.Frame):
         tag = f"cid_{conn.id}"
         line = self.canvas.create_line(
             *self._connection_line_points(conn),
-            fill=conn.color, width=conn.line_width, smooth=True,
+            fill=conn.color, width=max(1, conn.line_width * self._zoom), smooth=True,
             capstyle=tk.ROUND, joinstyle=tk.ROUND,
             tags=("conn", tag),
         )
@@ -415,6 +572,9 @@ class MindMapCanvas(tk.Frame):
         for conn in self.connections.values():
             if conn.source_id == node_id or conn.target_id == node_id:
                 self.canvas.coords(self.conn_items[conn.id], *self._connection_line_points(conn))
+                selected = self.selected == ("conn", conn.id)
+                width = conn.line_width * self._zoom + (3 if selected else 0)
+                self.canvas.itemconfig(self.conn_items[conn.id], width=max(1, width))
 
     def delete_connection(self, conn_id: int) -> None:
         if conn_id not in self.connections:
@@ -437,7 +597,8 @@ class MindMapCanvas(tk.Frame):
         elif kind == "conn" and item_id in self.conn_items:
             conn = self.connections.get(item_id)
             if conn:
-                self.canvas.itemconfig(self.conn_items[item_id], width=conn.line_width)
+                self.canvas.itemconfig(self.conn_items[item_id],
+                                        width=max(1, conn.line_width * self._zoom))
         self.selected = None
 
     def select_node(self, node_id: int) -> None:
@@ -450,7 +611,8 @@ class MindMapCanvas(tk.Frame):
         self.clear_selection()
         self.selected = ("conn", conn_id)
         conn = self.connections[conn_id]
-        self.canvas.itemconfig(self.conn_items[conn_id], width=conn.line_width + 3)
+        self.canvas.itemconfig(self.conn_items[conn_id],
+                                width=max(1, conn.line_width * self._zoom) + 3)
         self._set_status("Conexión seleccionada. Usa el botón de color para cambiarla.")
 
     def delete_selected(self) -> None:
@@ -467,7 +629,7 @@ class MindMapCanvas(tk.Frame):
     # Identificación de elementos bajo el cursor
     # ------------------------------------------------------------------ #
     def _node_id_at(self, x: float, y: float) -> Optional[int]:
-        for item in self.canvas.find_overlapping(x - 2, y - 2, x + 2, y + 2):
+        for item in self.canvas.find_overlapping(x - 6, y - 6, x + 6, y + 6):
             for tag in self.canvas.gettags(item):
                 if tag.startswith("nid_"):
                     return int(tag.split("_", 1)[1])
@@ -502,8 +664,9 @@ class MindMapCanvas(tk.Frame):
                 self._drag = {"mode": "connect", "node_id": node_id,
                                "last_x": event.x, "last_y": event.y}
                 node = self.nodes[node_id]
+                sx, sy = self._to_screen(node.x, node.y)
                 self._connect_temp_line = self.canvas.create_line(
-                    node.x, node.y, event.x, event.y,
+                    sx, sy, event.x, event.y,
                     fill="#999999", width=2, dash=(4, 2),
                 )
             else:
@@ -526,16 +689,18 @@ class MindMapCanvas(tk.Frame):
         if mode == "move":
             node_id = self._drag["node_id"]
             node = self.nodes[node_id]
-            dx = event.x - self._drag["last_x"]
-            dy = event.y - self._drag["last_y"]
+            dx = (event.x - self._drag["last_x"]) / self._zoom
+            dy = (event.y - self._drag["last_y"]) / self._zoom
             node.x += dx
             node.y += dy
-            self.canvas.move(f"nid_{node_id}", dx, dy)
+            self.canvas.move(f"nid_{node_id}",
+                              event.x - self._drag["last_x"], event.y - self._drag["last_y"])
             self._update_connections_for_node(node_id)
             self._drag["last_x"], self._drag["last_y"] = event.x, event.y
         elif mode == "connect" and self._connect_temp_line is not None:
             node = self.nodes[self._drag["node_id"]]
-            self.canvas.coords(self._connect_temp_line, node.x, node.y, event.x, event.y)
+            sx, sy = self._to_screen(node.x, node.y)
+            self.canvas.coords(self._connect_temp_line, sx, sy, event.x, event.y)
             target_id = self._node_id_at(event.x, event.y)
             self.canvas.config(cursor="hand2" if target_id not in (None, self._drag["node_id"])
                                 else "X_cursor")
@@ -560,7 +725,8 @@ class MindMapCanvas(tk.Frame):
         if node_id is not None:
             self.rename_node(node_id)
         else:
-            self.new_node(x=event.x, y=event.y)
+            mx, my = self._to_model(event.x, event.y)
+            self.new_node(x=mx, y=my)
 
     def _on_canvas_right_click(self, event) -> None:
         node_id = self._node_id_at(event.x, event.y)
@@ -602,7 +768,8 @@ class MindMapCanvas(tk.Frame):
 
     def _show_canvas_menu(self, event) -> None:
         menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="Nuevo nodo aquí", command=lambda: self.new_node(x=event.x, y=event.y))
+        mx, my = self._to_model(event.x, event.y)
+        menu.add_command(label="Nuevo nodo aquí", command=lambda: self.new_node(x=mx, y=my))
         menu.tk_popup(event.x_root, event.y_root)
 
     # ------------------------------------------------------------------ #
@@ -640,8 +807,8 @@ class MindMapCanvas(tk.Frame):
         conn = self.connections[conn_id]
         conn.line_width = max(1, min(12, conn.line_width + delta))
         selected = self.selected == ("conn", conn_id)
-        self.canvas.itemconfig(self.conn_items[conn_id],
-                                width=conn.line_width + (3 if selected else 0))
+        width = conn.line_width * self._zoom + (3 if selected else 0)
+        self.canvas.itemconfig(self.conn_items[conn_id], width=max(1, width))
 
     # ------------------------------------------------------------------ #
     # Selección desde botones externos (toolbar)
@@ -707,7 +874,8 @@ class MindMapCanvas(tk.Frame):
             if conn is not None:
                 conn.color = branch_color
                 conn.line_width = branch_width
-                self.canvas.itemconfig(self.conn_items[conn.id], fill=branch_color, width=branch_width)
+                self.canvas.itemconfig(self.conn_items[conn.id], fill=branch_color,
+                                        width=max(1, branch_width * self._zoom))
 
             self._place_outline_children(
                 child_node, outline_child.children, cx, cy,
@@ -774,6 +942,9 @@ class MindMapCanvas(tk.Frame):
         self.selected = None
         self._node_id_seq = itertools.count(1)
         self._conn_id_seq = itertools.count(1)
+        self._zoom = 1.0
+        self._pan_x = 0.0
+        self._pan_y = 0.0
 
     # ------------------------------------------------------------------ #
     # Exportar como imagen
@@ -786,22 +957,34 @@ class MindMapCanvas(tk.Frame):
         PATH) o con Pillow (si está instalado); si ninguno está disponible, deja
         el archivo como PostScript (.ps) y lo informa mediante RuntimeError.
         """
-        bbox = self.canvas.bbox("all")
-        if bbox is None:
+        if not self.nodes:
             raise ValueError("El mapa está vacío: no hay nada que exportar.")
 
-        x1, y1, x2, y2 = bbox
-        margin = 24
-        width = (x2 - x1) + 2 * margin
-        height = (y2 - y1) + 2 * margin
+        # Exporta siempre a un zoom del 100%, sin importar el nivel de zoom
+        # actual en pantalla, para que el resultado sea siempre nítido y consistente.
+        prev_zoom, prev_pan_x, prev_pan_y = self._zoom, self._pan_x, self._pan_y
+        self._zoom, self._pan_x, self._pan_y = 1.0, 0.0, 0.0
+        self._redraw_all()
+        try:
+            bbox = self.canvas.bbox("all")
+            if bbox is None:
+                raise ValueError("El mapa está vacío: no hay nada que exportar.")
 
-        wants_png = path.lower().endswith(".png")
-        ps_path = path + ".tmp.ps" if wants_png else path
+            x1, y1, x2, y2 = bbox
+            margin = 24
+            width = (x2 - x1) + 2 * margin
+            height = (y2 - y1) + 2 * margin
 
-        self.canvas.postscript(
-            file=ps_path, x=x1 - margin, y=y1 - margin,
-            width=width, height=height, colormode="color",
-        )
+            wants_png = path.lower().endswith(".png")
+            ps_path = path + ".tmp.ps" if wants_png else path
+
+            self.canvas.postscript(
+                file=ps_path, x=x1 - margin, y=y1 - margin,
+                width=width, height=height, colormode="color",
+            )
+        finally:
+            self._zoom, self._pan_x, self._pan_y = prev_zoom, prev_pan_x, prev_pan_y
+            self._redraw_all()
 
         if not wants_png:
             return path

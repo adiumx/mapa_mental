@@ -2,9 +2,9 @@
 
 import json
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from .canvas import DEFAULT_PALETTE, MindMapCanvas, PALETTES
+from .canvas import DEFAULT_PALETTE, DEFAULT_THEME, MindMapCanvas, PALETTES, THEMES
 
 
 class MindMapApp(tk.Tk):
@@ -83,14 +83,26 @@ class MindMapApp(tk.Tk):
         ttk.Separator(row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(row1, text="Eliminar", command=self._delete_button).pack(side=tk.LEFT, padx=3)
 
+        ttk.Label(row2, text="Tema:").pack(side=tk.LEFT, padx=(3, 4))
+        self.theme_var = tk.StringVar(value=DEFAULT_THEME)
+        self.theme_combo = ttk.Combobox(
+            row2, textvariable=self.theme_var, values=list(THEMES.keys()),
+            state="readonly", width=10,
+        )
+        self.theme_combo.pack(side=tk.LEFT, padx=3)
+        self.theme_combo.bind("<<ComboboxSelected>>", lambda e: self._apply_theme())
+        ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+
         ttk.Label(row2, text="Paleta:").pack(side=tk.LEFT, padx=(3, 4))
         self.palette_var = tk.StringVar(value=DEFAULT_PALETTE)
-        palette_combo = ttk.Combobox(
+        self.palette_combo = ttk.Combobox(
             row2, textvariable=self.palette_var, values=list(PALETTES.keys()),
             state="readonly", width=12,
         )
-        palette_combo.pack(side=tk.LEFT, padx=3)
-        palette_combo.bind("<<ComboboxSelected>>", lambda e: self._apply_palette())
+        self.palette_combo.pack(side=tk.LEFT, padx=3)
+        self.palette_combo.bind("<<ComboboxSelected>>", lambda e: self._apply_palette())
+        ttk.Button(row2, text="Nueva paleta...", command=self._create_custom_palette_dialog).pack(
+            side=tk.LEFT, padx=3)
         ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(row2, text="Guardar", command=self.save_map).pack(side=tk.LEFT, padx=3)
         ttk.Button(row2, text="Abrir", command=self.open_map).pack(side=tk.LEFT, padx=3)
@@ -113,6 +125,7 @@ class MindMapApp(tk.Tk):
             "• Doble clic en un espacio vacío: crear un nodo nuevo\n"
             "• Doble clic en un nodo: renombrarlo\n"
             "• Arrastrar un nodo: moverlo\n"
+            "• Rueda del mouse: acercar / alejar (zoom), centrado en el cursor\n"
             "• Botón \"Conectar nodos\": actívalo, haz clic en el nodo origen y luego\n"
             "  en el nodo destino para crear la conexión (o mantén Shift y arrastra\n"
             "  de un nodo a otro, si lo prefieres)\n"
@@ -123,8 +136,11 @@ class MindMapApp(tk.Tk):
             "• Clic derecho en un nodo: convertirlo en nodo central o de rama\n\n"
             "Archivo > Generar desde texto / Markdown: pega texto o Markdown y conviértelo\n"
             "automáticamente en un mapa mental gráfico (un nodo por oración, viñeta o título).\n\n"
+            "Tema (barra de herramientas): cambia el estilo visual de los nodos y conexiones\n"
+            "(Cuadrados, Contorno, Oscuro, Ramas).\n\n"
             "Paleta de colores (barra de herramientas): elige un set de colores; se aplica\n"
-            "a todo el mapa actual y a los nodos que generes de ahí en adelante.\n\n"
+            "a todo el mapa actual y a los nodos que generes de ahí en adelante. El botón\n"
+            "\"Nueva paleta...\" te deja crear y guardar tu propia combinación de colores.\n\n"
             "Archivo > Exportar como imagen: guarda el mapa como PNG (requiere Ghostscript\n"
             "o Pillow instalado en el sistema; si no están disponibles, se guarda como .ps).",
         )
@@ -159,6 +175,72 @@ class MindMapApp(tk.Tk):
 
     def _apply_palette(self):
         self.mind_canvas.apply_palette(self.palette_var.get())
+
+    def _apply_theme(self):
+        self.mind_canvas.set_theme(self.theme_var.get())
+
+    def _refresh_palette_choices(self):
+        self.palette_combo["values"] = list(PALETTES.keys())
+
+    def _create_custom_palette_dialog(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Nueva paleta de colores")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+
+        ttk.Label(dialog, text="Nombre de la paleta:").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+        name_var = tk.StringVar(value="Mi paleta")
+        ttk.Entry(dialog, textvariable=name_var, width=28).grid(
+            row=1, column=0, columnspan=6, sticky="we", padx=10)
+
+        default_colors = ["#4a90d9", "#e0673a", "#3aab6b", "#c94f9e", "#e0a83a", "#7c5cc4"]
+        color_vars = [tk.StringVar(value=c) for c in default_colors]
+
+        ttk.Label(dialog, text="Colores de las ramas (haz clic para cambiar cada uno):").grid(
+            row=2, column=0, columnspan=6, sticky="w", padx=10, pady=(12, 2))
+
+        def make_pick_handler(var, btn):
+            def handler():
+                _, hex_color = colorchooser.askcolor(color=var.get(), title="Elegir color", parent=dialog)
+                if hex_color:
+                    var.set(hex_color)
+                    btn.config(bg=hex_color, activebackground=hex_color)
+            return handler
+
+        for i, var in enumerate(color_vars):
+            btn = tk.Button(dialog, bg=var.get(), activebackground=var.get(),
+                             width=4, relief="raised", bd=2)
+            btn.grid(row=3, column=i, padx=4, pady=2)
+            btn.config(command=make_pick_handler(var, btn))
+
+        ttk.Label(dialog, text="Color del nodo central:").grid(
+            row=4, column=0, columnspan=3, sticky="w", padx=10, pady=(14, 2))
+        accent_var = tk.StringVar(value="#2b3a4a")
+        accent_btn = tk.Button(dialog, bg=accent_var.get(), activebackground=accent_var.get(),
+                                width=4, relief="raised", bd=2)
+        accent_btn.grid(row=5, column=0, padx=10, pady=2, sticky="w")
+        accent_btn.config(command=make_pick_handler(accent_var, accent_btn))
+
+        btns = ttk.Frame(dialog)
+        btns.grid(row=6, column=0, columnspan=6, sticky="we", padx=10, pady=14)
+
+        def on_save():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showinfo("Nueva paleta", "Ponle un nombre a la paleta.", parent=dialog)
+                return
+            colors = [v.get() for v in color_vars]
+            self.mind_canvas.add_custom_palette(name, colors, accent_var.get())
+            self._refresh_palette_choices()
+            self.palette_var.set(name)
+            self._apply_palette()
+            dialog.destroy()
+
+        ttk.Button(btns, text="Guardar y aplicar", command=on_save).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        dialog.grab_set()
 
     def _on_connect_mode_change(self, active: bool):
         self.connect_btn.config(text="Conectar (clic para salir)" if active else "Conectar nodos")
