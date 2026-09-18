@@ -1,7 +1,9 @@
 # Mapas Mentales
 
 Aplicación de escritorio en Python (Tkinter) para crear mapas mentales: nodos que se
-arrastran libremente por el lienzo y conexiones a las que se les puede cambiar el color.
+arrastran libremente por el lienzo, con conexiones curvas y ahusadas (como ramas) a
+las que se les puede cambiar el color, un nodo central circular y varias paletas de
+colores para darle un estilo visual atractivo.
 
 ## Requisitos
 
@@ -26,12 +28,14 @@ python3 main.py
 - **Doble clic en un espacio vacío**: crea un nodo nuevo.
 - **Doble clic sobre un nodo**: renombrarlo.
 - **Arrastrar un nodo**: moverlo por el lienzo.
-- **Shift + arrastrar desde un nodo hasta otro**: crea una conexión entre ambos.
-- **Clic sobre una conexión**: la selecciona (se resalta con línea punteada).
+- **Botón "Conectar nodos"** (barra de herramientas): actívalo, haz clic en el nodo
+  origen y luego en el destino para crear la conexión. También puedes mantener
+  **Shift y arrastrar** de un nodo a otro, si lo prefieres.
+- **Clic sobre una conexión**: la selecciona (se resalta con un borde de color).
 - **Clic derecho** sobre un nodo o conexión: abre un menú con más opciones
-  (cambiar color, cambiar grosor, eliminar).
-- **Barra de herramientas**: botones para agregar nodo, renombrar, cambiar color
-  de nodo/conexión, eliminar, guardar y abrir.
+  (cambiar color, cambiar grosor, convertir en nodo central/de rama, eliminar).
+- **Barra de herramientas**: botones para agregar nodo, conectar, renombrar, cambiar
+  color de nodo/conexión, eliminar, elegir paleta, guardar y abrir.
 - **Tecla Supr/Backspace**: elimina el nodo o la conexión seleccionada.
 - **Guardar / Abrir**: el mapa se guarda como archivo `.json`, conservando
   posiciones, textos y colores.
@@ -45,6 +49,11 @@ python3 main.py
     oración se convierte en un nodo.
   - Cada rama principal recibe un color distinto, aplicado también a sus
     conexiones, y luego se puede seguir editando manualmente.
+- **Paleta de colores** (barra de herramientas): elige entre varios sets de
+  colores (Vivo, Océano, Atardecer, Pastel, Clásico). Al seleccionar una, se
+  recolorea todo el mapa actual por ramas (cada rama principal y sus
+  descendientes reciben un color de la paleta) y se usa para los nodos que
+  crees de ahí en adelante.
 - **Deshacer / rehacer** (`Ctrl+Z` / `Ctrl+Y`, o menú *Editar*): revierte
   cualquier acción (crear, mover, renombrar, cambiar colores, eliminar,
   generar mapa desde texto, nuevo mapa, abrir archivo).

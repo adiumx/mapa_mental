@@ -4,7 +4,7 @@ import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .canvas import MindMapCanvas
+from .canvas import DEFAULT_PALETTE, MindMapCanvas, PALETTES
 
 
 class MindMapApp(tk.Tk):
@@ -19,16 +19,14 @@ class MindMapApp(tk.Tk):
 
         self._build_menu()
         self._build_toolbar()
-        self.mind_canvas = MindMapCanvas(self, on_status=self._set_status)
+        self.mind_canvas = MindMapCanvas(
+            self, on_status=self._set_status, on_connect_mode_change=self._on_connect_mode_change,
+        )
         self.mind_canvas.pack(fill=tk.BOTH, expand=True)
         self._build_status_bar()
 
-        self.mind_canvas.new_node(
-            x=self.winfo_screenwidth() // 4,
-            y=250,
-            text="Idea central",
-            color="#4a90d9",
-        )
+        self.update_idletasks()  # asegura que el canvas ya tenga su tamaño real antes de centrar el nodo
+        self.mind_canvas.reset_to_default()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -67,25 +65,38 @@ class MindMapApp(tk.Tk):
         self.bind_all("<Control-Shift-Z>", lambda e: self._redo())
 
     def _build_toolbar(self):
-        bar = ttk.Frame(self, padding=6)
-        bar.pack(fill=tk.X)
+        row1 = ttk.Frame(self, padding=(6, 6, 6, 3))
+        row1.pack(fill=tk.X)
+        row2 = ttk.Frame(self, padding=(6, 0, 6, 6))
+        row2.pack(fill=tk.X)
 
-        ttk.Button(bar, text="Deshacer", command=self._undo).pack(side=tk.LEFT, padx=3)
-        ttk.Button(bar, text="Rehacer", command=self._redo).pack(side=tk.LEFT, padx=3)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(bar, text="+ Nodo", command=self._add_node_button).pack(side=tk.LEFT, padx=3)
-        ttk.Button(bar, text="Renombrar", command=self._rename_button).pack(side=tk.LEFT, padx=3)
-        ttk.Button(bar, text="Color de nodo", command=self._node_color_button).pack(side=tk.LEFT, padx=3)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(bar, text="Color de conexión", command=self._conn_color_button).pack(side=tk.LEFT, padx=3)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(bar, text="Eliminar", command=self._delete_button).pack(side=tk.LEFT, padx=3)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(bar, text="Guardar", command=self.save_map).pack(side=tk.LEFT, padx=3)
-        ttk.Button(bar, text="Abrir", command=self.open_map).pack(side=tk.LEFT, padx=3)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(bar, text="Texto → Mapa", command=self._import_text_dialog).pack(side=tk.LEFT, padx=3)
-        ttk.Button(bar, text="Exportar imagen", command=self.export_image).pack(side=tk.LEFT, padx=3)
+        ttk.Button(row1, text="Deshacer", command=self._undo).pack(side=tk.LEFT, padx=3)
+        ttk.Button(row1, text="Rehacer", command=self._redo).pack(side=tk.LEFT, padx=3)
+        ttk.Separator(row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(row1, text="+ Nodo", command=self._add_node_button).pack(side=tk.LEFT, padx=3)
+        self.connect_btn = ttk.Button(row1, text="Conectar nodos", command=self._toggle_connect_mode)
+        self.connect_btn.pack(side=tk.LEFT, padx=3)
+        ttk.Button(row1, text="Renombrar", command=self._rename_button).pack(side=tk.LEFT, padx=3)
+        ttk.Separator(row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(row1, text="Color de nodo", command=self._node_color_button).pack(side=tk.LEFT, padx=3)
+        ttk.Button(row1, text="Color de conexión", command=self._conn_color_button).pack(side=tk.LEFT, padx=3)
+        ttk.Separator(row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(row1, text="Eliminar", command=self._delete_button).pack(side=tk.LEFT, padx=3)
+
+        ttk.Label(row2, text="Paleta:").pack(side=tk.LEFT, padx=(3, 4))
+        self.palette_var = tk.StringVar(value=DEFAULT_PALETTE)
+        palette_combo = ttk.Combobox(
+            row2, textvariable=self.palette_var, values=list(PALETTES.keys()),
+            state="readonly", width=12,
+        )
+        palette_combo.pack(side=tk.LEFT, padx=3)
+        palette_combo.bind("<<ComboboxSelected>>", lambda e: self._apply_palette())
+        ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(row2, text="Guardar", command=self.save_map).pack(side=tk.LEFT, padx=3)
+        ttk.Button(row2, text="Abrir", command=self.open_map).pack(side=tk.LEFT, padx=3)
+        ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(row2, text="Texto → Mapa", command=self._import_text_dialog).pack(side=tk.LEFT, padx=3)
+        ttk.Button(row2, text="Exportar imagen", command=self.export_image).pack(side=tk.LEFT, padx=3)
 
     def _build_status_bar(self):
         bar = ttk.Frame(self, padding=(8, 3))
@@ -102,13 +113,18 @@ class MindMapApp(tk.Tk):
             "• Doble clic en un espacio vacío: crear un nodo nuevo\n"
             "• Doble clic en un nodo: renombrarlo\n"
             "• Arrastrar un nodo: moverlo\n"
-            "• Shift + arrastrar desde un nodo a otro: crear una conexión\n"
+            "• Botón \"Conectar nodos\": actívalo, haz clic en el nodo origen y luego\n"
+            "  en el nodo destino para crear la conexión (o mantén Shift y arrastra\n"
+            "  de un nodo a otro, si lo prefieres)\n"
             "• Clic en una conexión: seleccionarla\n"
             "• Clic derecho: menú con más opciones (color, grosor, eliminar)\n"
             "• Tecla Supr: eliminar lo seleccionado\n"
-            "• Ctrl+Z / Ctrl+Y: deshacer / rehacer\n\n"
+            "• Ctrl+Z / Ctrl+Y: deshacer / rehacer\n"
+            "• Clic derecho en un nodo: convertirlo en nodo central (circular) o de rama\n\n"
             "Archivo > Generar desde texto / Markdown: pega texto o Markdown y conviértelo\n"
             "automáticamente en un mapa mental gráfico (un nodo por oración, viñeta o título).\n\n"
+            "Paleta de colores (barra de herramientas): elige un set de colores; se aplica\n"
+            "a todo el mapa actual y a los nodos que generes de ahí en adelante.\n\n"
             "Archivo > Exportar como imagen: guarda el mapa como PNG (requiere Ghostscript\n"
             "o Pillow instalado en el sistema; si no están disponibles, se guarda como .ps).",
         )
@@ -137,6 +153,15 @@ class MindMapApp(tk.Tk):
             messagebox.showinfo("Color de conexión", "Selecciona primero una conexión (clic sobre la línea).")
             return
         self.mind_canvas.change_connection_color(conn_id)
+
+    def _toggle_connect_mode(self):
+        self.mind_canvas.toggle_connect_mode()
+
+    def _apply_palette(self):
+        self.mind_canvas.apply_palette(self.palette_var.get())
+
+    def _on_connect_mode_change(self, active: bool):
+        self.connect_btn.config(text="Conectar (clic para salir)" if active else "Conectar nodos")
 
     def _undo(self):
         self.mind_canvas.undo()

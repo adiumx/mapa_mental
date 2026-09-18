@@ -1,6 +1,6 @@
 """Modelos de datos para nodos y conexiones del mapa mental."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict
 
 
@@ -11,7 +11,7 @@ class Node:
     y: float
     text: str = "Nueva idea"
     color: str = "#4a90d9"
-    text_color: str = "#ffffff"
+    shape: str = "leaf"  # "root" (nodo central, circular) o "leaf" (texto de color)
     width: float = 140
     height: float = 56
 
@@ -22,7 +22,7 @@ class Node:
             "y": self.y,
             "text": self.text,
             "color": self.color,
-            "text_color": self.text_color,
+            "shape": self.shape,
             "width": self.width,
             "height": self.height,
         }
@@ -35,7 +35,7 @@ class Node:
             y=data["y"],
             text=data.get("text", "Nueva idea"),
             color=data.get("color", "#4a90d9"),
-            text_color=data.get("text_color", "#ffffff"),
+            shape=data.get("shape", "leaf"),
             width=data.get("width", 140),
             height=data.get("height", 56),
         )
@@ -47,7 +47,7 @@ class Connection:
     source_id: int
     target_id: int
     color: str = "#8a8a8a"
-    line_width: int = 3
+    line_width: int = 10
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -65,5 +65,5 @@ class Connection:
             source_id=data["source_id"],
             target_id=data["target_id"],
             color=data.get("color", "#8a8a8a"),
-            line_width=data.get("line_width", 3),
+            line_width=data.get("line_width", 10),
         )
