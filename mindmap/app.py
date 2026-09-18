@@ -153,8 +153,14 @@ class MindMapApp(tk.Tk):
     def _import_text_dialog(self):
         dialog = tk.Toplevel(self)
         dialog.title("Generar mapa desde texto / Markdown")
-        dialog.geometry("560x440")
+        dialog.geometry("560x480")
+        dialog.minsize(420, 320)
         dialog.transient(self)
+
+        # Los botones se empaquetan primero, anclados abajo, para que siempre
+        # queden visibles sin importar cuánto crezca el cuadro de texto.
+        btns = ttk.Frame(dialog)
+        btns.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=8)
 
         ttk.Label(
             dialog,
@@ -166,12 +172,15 @@ class MindMapApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", padx=10, pady=(10, 4))
 
-        text_widget = tk.Text(dialog, wrap="word", undo=True)
-        text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
-        text_widget.focus_set()
+        text_frame = ttk.Frame(dialog)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
 
-        btns = ttk.Frame(dialog)
-        btns.pack(fill=tk.X, padx=10, pady=8)
+        text_widget = tk.Text(text_frame, wrap="word", undo=True, height=12)
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        text_widget.focus_set()
 
         def on_generate():
             raw = text_widget.get("1.0", "end").strip()
