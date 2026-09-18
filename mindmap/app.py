@@ -120,7 +120,7 @@ class MindMapApp(tk.Tk):
             "• Clic derecho: menú con más opciones (color, grosor, eliminar)\n"
             "• Tecla Supr: eliminar lo seleccionado\n"
             "• Ctrl+Z / Ctrl+Y: deshacer / rehacer\n"
-            "• Clic derecho en un nodo: convertirlo en nodo central (circular) o de rama\n\n"
+            "• Clic derecho en un nodo: convertirlo en nodo central o de rama\n\n"
             "Archivo > Generar desde texto / Markdown: pega texto o Markdown y conviértelo\n"
             "automáticamente en un mapa mental gráfico (un nodo por oración, viñeta o título).\n\n"
             "Paleta de colores (barra de herramientas): elige un set de colores; se aplica\n"

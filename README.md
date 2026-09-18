@@ -1,9 +1,9 @@
 # Mapas Mentales
 
-Aplicación de escritorio en Python (Tkinter) para crear mapas mentales: nodos que se
-arrastran libremente por el lienzo, con conexiones curvas y ahusadas (como ramas) a
-las que se les puede cambiar el color, un nodo central circular y varias paletas de
-colores para darle un estilo visual atractivo.
+Aplicación de escritorio en Python (Tkinter) para crear mapas mentales: nodos (cajas
+redondeadas con texto) que se arrastran libremente por el lienzo, conectados con
+líneas curvas a las que se les puede cambiar el color y el grosor, con un nodo
+central destacado y varias paletas de colores para un estilo limpio y moderno.
 
 ## Requisitos
 

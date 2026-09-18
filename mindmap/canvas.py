@@ -47,47 +47,22 @@ def _rect_clearance(width, height, ux, uy):
     return min(tx, ty)
 
 
-def _ellipse_clearance(width, height, ux, uy):
-    """Distancia del centro al borde de una elipse width x height en la dirección (ux, uy)."""
-    rx, ry = width / 2, height / 2
-    if rx <= 0 or ry <= 0:
-        return max(rx, ry)
-    denom = math.hypot(ux / rx, uy / ry)
-    return 1 / denom if denom > 1e-9 else max(rx, ry)
-
-
-def _quad_bezier(p0, p1, p2, t):
-    x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t ** 2 * p2[0]
-    y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t ** 2 * p2[1]
-    return x, y
-
-
-def _tapered_branch_points(x1, y1, x2, y2, width_at, curve=0.18, samples=24):
-    """Puntos de un polígono suave que sigue una curva cuadrática de Bézier entre
-    (x1,y1) y (x2,y2), con el ancho en cada punto dado por width_at(t), t en [0, 1]."""
-    dist = math.hypot(x2 - x1, y2 - y1) or 1
-    mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-    px, py = -(y2 - y1) / dist, (x2 - x1) / dist
-    offset = dist * curve
-    cx, cy = mx + px * offset, my + py * offset
-
-    top_pts, bottom_pts = [], []
-    for i in range(samples + 1):
-        t = i / samples
-        bx, by = _quad_bezier((x1, y1), (cx, cy), (x2, y2), t)
-        t2 = min(t + 0.02, 1.0)
-        nx, ny = _quad_bezier((x1, y1), (cx, cy), (x2, y2), t2)
-        tdx, tdy = nx - bx, ny - by
-        tlen = math.hypot(tdx, tdy) or 1
-        tpx, tpy = -tdy / tlen, tdx / tlen
-        w = width_at(t) / 2
-        top_pts.append((bx + tpx * w, by + tpy * w))
-        bottom_pts.append((bx - tpx * w, by - tpy * w))
-
-    flat = []
-    for px_, py_ in top_pts + bottom_pts[::-1]:
-        flat.extend([px_, py_])
-    return flat
+def _rounded_rect_points(x1, y1, x2, y2, radius):
+    radius = max(0, min(radius, (x2 - x1) / 2, (y2 - y1) / 2))
+    return [
+        x1 + radius, y1,
+        x2 - radius, y1,
+        x2, y1,
+        x2, y1 + radius,
+        x2, y2 - radius,
+        x2, y2,
+        x2 - radius, y2,
+        x1 + radius, y2,
+        x1, y2,
+        x1, y2 - radius,
+        x1, y1 + radius,
+        x1, y1,
+    ]
 
 
 class MindMapCanvas(tk.Frame):
@@ -147,7 +122,7 @@ class MindMapCanvas(tk.Frame):
 
     def _font(self, node: Optional[Node] = None):
         import tkinter.font as tkfont
-        size = 15 if (node and node.shape == "root") else 12
+        size = 16 if (node and node.shape == "root") else 12
         return tkfont.Font(family="Helvetica", size=size, weight="bold")
 
     def _canvas_center(self) -> Tuple[float, float]:
@@ -317,42 +292,30 @@ class MindMapCanvas(tk.Frame):
 
     def _draw_node(self, node: Node) -> None:
         font = self._font(node)
-        display_text = node.text.upper() if node.shape == "root" else node.text
-        lines = display_text.split("\n") or [""]
+        lines = node.text.split("\n") or [""]
         text_w = max(font.measure(line) for line in lines)
-        text_h = 22 * len(lines)
+        is_root = node.shape == "root"
+        text_h = (26 if is_root else 20) * len(lines)
+        pad_x, pad_y = (34, 20) if is_root else (16, 10)
+        min_w, min_h = (140, 60) if is_root else (50, 34)
         tag = f"nid_{node.id}"
 
-        if node.shape == "root":
-            node.width = max(160, text_w + 70)
-            node.height = max(100, text_h + 60)
-            x1, y1 = node.x - node.width / 2, node.y - node.height / 2
-            x2, y2 = node.x + node.width / 2, node.y + node.height / 2
-            shape_item = self.canvas.create_oval(
-                x1, y1, x2, y2, outline=node.color, width=7, fill="#ffffff",
-                tags=("node", tag),
-            )
-            text_item = self.canvas.create_text(
-                node.x, node.y, text=node.text.upper(), fill="#1a1a1a",
-                font=font, tags=("node", "node-text", tag), width=node.width - 30,
-                justify="center",
-            )
-        else:
-            node.width = max(50, text_w + 20)
-            node.height = max(26, text_h + 12)
-            x1, y1 = node.x - node.width / 2, node.y - node.height / 2
-            x2, y2 = node.x + node.width / 2, node.y + node.height / 2
-            shape_item = self.canvas.create_rectangle(
-                x1, y1, x2, y2, outline="", fill="", tags=("node", tag),
-            )
-            angle_deg, on_branch = self._incoming_branch_angle(node.id)
-            text_color = "#ffffff" if on_branch else node.color
-            text_item = self.canvas.create_text(
-                node.x, node.y, text=node.text, fill=text_color,
-                font=font, tags=("node", "node-text", tag), width=max(node.width, 220),
-                justify="center", angle=angle_deg,
-            )
+        node.width = max(min_w, text_w + 2 * pad_x)
+        node.height = max(min_h, text_h + 2 * pad_y)
+        x1, y1 = node.x - node.width / 2, node.y - node.height / 2
+        x2, y2 = node.x + node.width / 2, node.y + node.height / 2
+        radius = min(18, node.height / 2)
 
+        shape_item = self.canvas.create_polygon(
+            _rounded_rect_points(x1, y1, x2, y2, radius),
+            fill=node.color, outline="", width=0, smooth=True, splinesteps=8,
+            tags=("node", tag),
+        )
+        text_item = self.canvas.create_text(
+            node.x, node.y, text=node.text, fill="#ffffff",
+            font=font, tags=("node", "node-text", tag),
+            width=node.width - 2 * pad_x, justify="center",
+        )
         self.node_items[node.id] = {"shape": shape_item, "text": text_item}
 
         for t in (shape_item, text_item):
@@ -372,46 +335,11 @@ class MindMapCanvas(tk.Frame):
         self._update_connections_for_node(node.id)
 
     def _apply_node_selection_style(self, node_id: int, selected: bool) -> None:
-        node = self.nodes[node_id]
         shape_item = self.node_items[node_id]["shape"]
-        if node.shape == "root":
-            self.canvas.itemconfig(
-                shape_item, outline=SELECT_OUTLINE if selected else node.color,
-                width=9 if selected else 7,
-            )
-        else:
-            self.canvas.itemconfig(
-                shape_item, outline=SELECT_OUTLINE if selected else "",
-                width=2 if selected else 0,
-            )
-
-    def _incoming_connection(self, node_id: int) -> Optional[Connection]:
-        for conn in self.connections.values():
-            if conn.target_id == node_id:
-                return conn
-        return None
-
-    def _incoming_branch_angle(self, node_id: int) -> Tuple[float, bool]:
-        """Ángulo (grados) para orientar el texto sobre su rama entrante, y si tiene una."""
-        node = self.nodes[node_id]
-        incoming = self._incoming_connection(node_id)
-        if incoming is None:
-            return 0.0, False
-        src = self.nodes.get(incoming.source_id)
-        if src is None or (src.x == node.x and src.y == node.y):
-            return 0.0, False
-        angle_deg = -math.degrees(math.atan2(node.y - src.y, node.x - src.x))
-        if angle_deg > 90 or angle_deg < -90:
-            angle_deg += 180
-        return angle_deg, True
-
-    def _update_node_text_angle(self, node_id: int) -> None:
-        node = self.nodes.get(node_id)
-        if node is None or node.shape == "root":
-            return
-        angle_deg, on_branch = self._incoming_branch_angle(node_id)
-        text_color = "#ffffff" if on_branch else node.color
-        self.canvas.itemconfig(self.node_items[node_id]["text"], angle=angle_deg, fill=text_color)
+        self.canvas.itemconfig(
+            shape_item, outline=SELECT_OUTLINE if selected else "",
+            width=3 if selected else 0,
+        )
 
     def toggle_node_shape(self, node_id: int) -> None:
         node = self.nodes[node_id]
@@ -454,86 +382,39 @@ class MindMapCanvas(tk.Frame):
         self._snapshot_undo()
         conn = Connection(
             id=next(self._conn_id_seq), source_id=source_id, target_id=target_id,
-            color=self.nodes[target_id].color, line_width=10,
+            color=self.nodes[target_id].color, line_width=3,
         )
         self.connections[conn.id] = conn
         self._draw_connection(conn)
-        self._update_node_text_angle(target_id)
         self.select_connection(conn.id)
         return conn
 
-    def _connection_coords(self, conn: Connection):
-        a = self.nodes[conn.source_id]
-        b = self.nodes[conn.target_id]
-        return a.x, a.y, b.x, b.y
-
-    def _branch_points(self, conn: Connection):
+    def _connection_line_points(self, conn: Connection):
         a = self.nodes[conn.source_id]
         b = self.nodes[conn.target_id]
         x1, y1, x2, y2 = a.x, a.y, b.x, b.y
         dist = math.hypot(x2 - x1, y2 - y1) or 1
-        ux, uy = (x2 - x1) / dist, (y2 - y1) / dist
-
-        base_w = conn.line_width * 2.2
-        tip_w = max(2.5, base_w * 0.3)
-
-        if a.shape == "root":
-            start_trim = _ellipse_clearance(a.width, a.height, ux, uy) + 2
-        else:
-            start_trim = max(_rect_clearance(a.width, a.height, ux, uy) + 4, base_w / 2 + 4)
-        start_trim = min(start_trim, dist * 0.4)
-        if b.shape == "root":
-            end_trim = min(_ellipse_clearance(b.width, b.height, ux, uy) + 6, dist * 0.4)
-        else:
-            # que la rama corra por debajo de toda la palabra en vez de detenerse antes:
-            # se extiende un poco más allá del centro del nodo (recorte negativo).
-            end_trim = max(-(b.width / 2 - 6), -dist * 0.4)
-
-        x1t, y1t = x1 + ux * start_trim, y1 + uy * start_trim
-        x2t, y2t = x2 - ux * end_trim, y2 - uy * end_trim
-
-        if b.shape == "root":
-            width_at = lambda t: base_w + (tip_w - base_w) * t  # noqa: E731
-        else:
-            # Meseta de ancho constante (al menos suficiente para el alto del texto)
-            # justo donde cae la palabra, para que no quede más angosta que el
-            # texto; la rama se afina antes (desde el origen) y después (tras la
-            # palabra), donde termina en una punta fina.
-            seg_len = math.hypot(x2t - x1t, y2t - y1t) or 1
-            plateau_w = max(base_w, 26)
-            dist_to_node = math.hypot(b.x - x1t, b.y - y1t)
-            half_text = b.width / 2
-            t1 = max(0.0, min(1.0, (dist_to_node - half_text) / seg_len))
-            t2 = max(0.0, min(1.0, (dist_to_node + half_text) / seg_len))
-            if t2 <= t1:
-                t2 = min(1.0, t1 + 0.01)
-
-            def width_at(t, _t1=t1, _t2=t2, _plateau=plateau_w):
-                if t <= _t1:
-                    local = t / _t1 if _t1 > 1e-6 else 1.0
-                    return base_w + (_plateau - base_w) * local
-                if t <= _t2:
-                    return _plateau
-                local = (t - _t2) / (1 - _t2) if _t2 < 1 - 1e-6 else 1.0
-                return _plateau + (tip_w - _plateau) * local
-
-        return _tapered_branch_points(x1t, y1t, x2t, y2t, width_at)
+        px, py = -(y2 - y1) / dist, (x2 - x1) / dist
+        offset = dist * 0.15
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        cx, cy = mx + px * offset, my + py * offset
+        return [x1, y1, cx, cy, x2, y2]
 
     def _draw_connection(self, conn: Connection) -> None:
         tag = f"cid_{conn.id}"
-        poly = self.canvas.create_polygon(
-            self._branch_points(conn),
-            fill=conn.color, outline="", smooth=True, splinesteps=10,
+        line = self.canvas.create_line(
+            *self._connection_line_points(conn),
+            fill=conn.color, width=conn.line_width, smooth=True,
+            capstyle=tk.ROUND, joinstyle=tk.ROUND,
             tags=("conn", tag),
         )
-        self.canvas.tag_lower(poly)
-        self.conn_items[conn.id] = poly
+        self.canvas.tag_lower(line)
+        self.conn_items[conn.id] = line
 
     def _update_connections_for_node(self, node_id: int) -> None:
         for conn in self.connections.values():
             if conn.source_id == node_id or conn.target_id == node_id:
-                self.canvas.coords(self.conn_items[conn.id], *self._branch_points(conn))
-                self._update_node_text_angle(conn.target_id)
+                self.canvas.coords(self.conn_items[conn.id], *self._connection_line_points(conn))
 
     def delete_connection(self, conn_id: int) -> None:
         if conn_id not in self.connections:
@@ -554,7 +435,9 @@ class MindMapCanvas(tk.Frame):
         if kind == "node" and item_id in self.node_items:
             self._apply_node_selection_style(item_id, False)
         elif kind == "conn" and item_id in self.conn_items:
-            self.canvas.itemconfig(self.conn_items[item_id], outline="", width=0)
+            conn = self.connections.get(item_id)
+            if conn:
+                self.canvas.itemconfig(self.conn_items[item_id], width=conn.line_width)
         self.selected = None
 
     def select_node(self, node_id: int) -> None:
@@ -566,7 +449,8 @@ class MindMapCanvas(tk.Frame):
     def select_connection(self, conn_id: int) -> None:
         self.clear_selection()
         self.selected = ("conn", conn_id)
-        self.canvas.itemconfig(self.conn_items[conn_id], outline=SELECT_OUTLINE, width=2)
+        conn = self.connections[conn_id]
+        self.canvas.itemconfig(self.conn_items[conn_id], width=conn.line_width + 3)
         self._set_status("Conexión seleccionada. Usa el botón de color para cambiarla.")
 
     def delete_selected(self) -> None:
@@ -583,14 +467,14 @@ class MindMapCanvas(tk.Frame):
     # Identificación de elementos bajo el cursor
     # ------------------------------------------------------------------ #
     def _node_id_at(self, x: float, y: float) -> Optional[int]:
-        for item in self.canvas.find_overlapping(x - 4, y - 4, x + 4, y + 4):
+        for item in self.canvas.find_overlapping(x - 2, y - 2, x + 2, y + 2):
             for tag in self.canvas.gettags(item):
                 if tag.startswith("nid_"):
                     return int(tag.split("_", 1)[1])
         return None
 
     def _conn_id_at(self, x: float, y: float) -> Optional[int]:
-        for item in self.canvas.find_overlapping(x - 3, y - 3, x + 3, y + 3):
+        for item in self.canvas.find_overlapping(x - 4, y - 4, x + 4, y + 4):
             tags = self.canvas.gettags(item)
             if "conn" in tags:
                 for tag in tags:
@@ -710,8 +594,8 @@ class MindMapCanvas(tk.Frame):
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Cambiar color de la conexión",
                           command=lambda: self.change_connection_color(conn_id))
-        menu.add_command(label="Aumentar grosor", command=lambda: self.change_connection_width(conn_id, 3))
-        menu.add_command(label="Disminuir grosor", command=lambda: self.change_connection_width(conn_id, -3))
+        menu.add_command(label="Aumentar grosor", command=lambda: self.change_connection_width(conn_id, 1))
+        menu.add_command(label="Disminuir grosor", command=lambda: self.change_connection_width(conn_id, -1))
         menu.add_separator()
         menu.add_command(label="Eliminar conexión", command=lambda: self.delete_connection(conn_id))
         menu.tk_popup(event.x_root, event.y_root)
@@ -754,8 +638,10 @@ class MindMapCanvas(tk.Frame):
     def change_connection_width(self, conn_id: int, delta: int) -> None:
         self._snapshot_undo()
         conn = self.connections[conn_id]
-        conn.line_width = max(4, min(40, conn.line_width + delta))
-        self.canvas.coords(self.conn_items[conn_id], *self._branch_points(conn))
+        conn.line_width = max(1, min(12, conn.line_width + delta))
+        selected = self.selected == ("conn", conn_id)
+        self.canvas.itemconfig(self.conn_items[conn_id],
+                                width=conn.line_width + (3 if selected else 0))
 
     # ------------------------------------------------------------------ #
     # Selección desde botones externos (toolbar)
@@ -800,18 +686,18 @@ class MindMapCanvas(tk.Frame):
             return
         count = len(children)
         step = (angle_end - angle_start) / count
-        branch_width = max(4, round(28 / (1.8 ** (level - 1))))
+        branch_width = max(1, 6 - (level - 1))
 
         for i, outline_child in enumerate(children):
             angle = angle_start + step * (i + 0.5)
             if level == 1 and parent_node.shape == "root":
                 # deja espacio suficiente para que el hijo no quede pegado a un
-                # óvalo raíz ancho (título largo) sin lugar para su propio texto
-                radius = _ellipse_clearance(
+                # nodo raíz ancho (título largo) sin lugar para su propio texto
+                radius = _rect_clearance(
                     parent_node.width, parent_node.height, math.cos(angle), math.sin(angle)
-                ) + 130
+                ) + 110
             else:
-                radius = 190 * level
+                radius = 170 * level
             x = cx + radius * math.cos(angle)
             y = cy + radius * math.sin(angle)
             branch_color = color or next(self._color_cycle)
@@ -821,8 +707,7 @@ class MindMapCanvas(tk.Frame):
             if conn is not None:
                 conn.color = branch_color
                 conn.line_width = branch_width
-                self.canvas.coords(self.conn_items[conn.id], *self._branch_points(conn))
-                self.canvas.itemconfig(self.conn_items[conn.id], fill=branch_color)
+                self.canvas.itemconfig(self.conn_items[conn.id], fill=branch_color, width=branch_width)
 
             self._place_outline_children(
                 child_node, outline_child.children, cx, cy,

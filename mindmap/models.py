@@ -11,7 +11,7 @@ class Node:
     y: float
     text: str = "Nueva idea"
     color: str = "#4a90d9"
-    shape: str = "leaf"  # "root" (nodo central, circular) o "leaf" (texto de color)
+    shape: str = "leaf"  # "root" (nodo central, más grande) o "leaf" (nodo de rama)
     width: float = 140
     height: float = 56
 
@@ -47,7 +47,7 @@ class Connection:
     source_id: int
     target_id: int
     color: str = "#8a8a8a"
-    line_width: int = 10
+    line_width: int = 3
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -65,5 +65,5 @@ class Connection:
             source_id=data["source_id"],
             target_id=data["target_id"],
             color=data.get("color", "#8a8a8a"),
-            line_width=data.get("line_width", 10),
+            line_width=data.get("line_width", 3),
         )
