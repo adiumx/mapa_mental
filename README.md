@@ -29,6 +29,7 @@ python3 main.py
 - **Doble clic sobre un nodo**: renombrarlo.
 - **Arrastrar un nodo**: moverlo por el lienzo.
 - **Rueda del mouse**: acercar o alejar (zoom), centrado en la posición del cursor.
+- **Mantener Espacio y arrastrar**: desplazarse por el lienzo (paneo) sin mover nodos.
 - **Botón "Conectar nodos"** (barra de herramientas): actívalo, haz clic en el nodo
   origen y luego en el destino para crear la conexión. También puedes mantener
   **Shift y arrastrar** de un nodo a otro, si lo prefieres.

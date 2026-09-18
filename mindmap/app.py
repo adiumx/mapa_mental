@@ -126,6 +126,7 @@ class MindMapApp(tk.Tk):
             "• Doble clic en un nodo: renombrarlo\n"
             "• Arrastrar un nodo: moverlo\n"
             "• Rueda del mouse: acercar / alejar (zoom), centrado en el cursor\n"
+            "• Mantén Espacio y arrastra: desplazarte por el lienzo (paneo)\n"
             "• Botón \"Conectar nodos\": actívalo, haz clic en el nodo origen y luego\n"
             "  en el nodo destino para crear la conexión (o mantén Shift y arrastra\n"
             "  de un nodo a otro, si lo prefieres)\n"

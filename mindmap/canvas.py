@@ -126,11 +126,17 @@ class MindMapCanvas(tk.Frame):
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<Button-4>", self._on_mousewheel)
         self.canvas.bind("<Button-5>", self._on_mousewheel)
+        self.canvas.bind("<KeyPress-space>", self._on_space_press)
+        self.canvas.bind("<KeyRelease-space>", self._on_space_release)
+        self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
         self.canvas.focus_set()
 
+        self._space_held = False
+
         self._set_status(
-            "Doble clic: crear nodo · Arrastrar: mover · Rueda del mouse: zoom · Botón "
-            "\"Conectar nodos\" (o Shift + arrastrar): crear una conexión · Clic derecho: opciones"
+            "Doble clic: crear nodo · Arrastrar: mover · Rueda del mouse: zoom · Espacio + "
+            "arrastrar: desplazarse · Botón \"Conectar nodos\" (o Shift + arrastrar): crear "
+            "una conexión · Clic derecho: opciones"
         )
 
     # ------------------------------------------------------------------ #
@@ -161,6 +167,20 @@ class MindMapCanvas(tk.Frame):
     def _on_escape(self) -> None:
         self._connect_first_node = None
         self.clear_selection()
+
+    # ------------------------------------------------------------------ #
+    # Desplazarse (paneo) con Espacio + arrastrar
+    # ------------------------------------------------------------------ #
+    def _on_space_press(self, event) -> None:
+        if not self._space_held:
+            self._space_held = True
+            if self._drag.get("mode") != "pan":
+                self.canvas.config(cursor="fleur")
+
+    def _on_space_release(self, event) -> None:
+        self._space_held = False
+        if self._drag.get("mode") != "pan":
+            self.canvas.config(cursor="")
 
     # ------------------------------------------------------------------ #
     # Zoom con la rueda del mouse
@@ -649,6 +669,12 @@ class MindMapCanvas(tk.Frame):
     # ------------------------------------------------------------------ #
     def _on_canvas_press(self, event) -> None:
         self.canvas.focus_set()
+
+        if self._space_held:
+            self._drag = {"mode": "pan", "node_id": None, "last_x": event.x, "last_y": event.y}
+            self.canvas.config(cursor="fleur")
+            return
+
         node_id = self._node_id_at(event.x, event.y)
 
         if self.connect_mode:
@@ -686,6 +712,14 @@ class MindMapCanvas(tk.Frame):
 
     def _on_canvas_motion(self, event) -> None:
         mode = self._drag.get("mode")
+        if mode == "pan":
+            dx = event.x - self._drag["last_x"]
+            dy = event.y - self._drag["last_y"]
+            self.canvas.move("all", dx, dy)
+            self._pan_x += dx
+            self._pan_y += dy
+            self._drag["last_x"], self._drag["last_y"] = event.x, event.y
+            return
         if mode == "move":
             node_id = self._drag["node_id"]
             node = self.nodes[node_id]
@@ -707,6 +741,10 @@ class MindMapCanvas(tk.Frame):
 
     def _on_canvas_release(self, event) -> None:
         mode = self._drag.get("mode")
+        if mode == "pan":
+            self.canvas.config(cursor="fleur" if self._space_held else "")
+            self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
+            return
         if mode == "connect":
             if self._connect_temp_line is not None:
                 self.canvas.delete(self._connect_temp_line)
