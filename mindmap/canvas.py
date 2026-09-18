@@ -41,7 +41,9 @@ THEMES = {
     "Cuadrados": {"node": "box", "fill": "solid", "bg": "#f4f6f8"},
     "Contorno": {"node": "box", "fill": "outline", "bg": "#ffffff"},
     "Oscuro": {"node": "box", "fill": "solid", "bg": "#1e1e2e"},
-    "Ramas": {"node": "dot", "fill": "solid", "bg": "#ffffff"},
+    "Ramas": {"node": "dot", "fill": "solid", "bg": "#ffffff", "root": "cloud"},
+    "Angular": {"node": "box", "fill": "solid", "bg": "#faf6ef",
+                "connector": "elbow", "connector_color": "#2b2b2b"},
 }
 DEFAULT_THEME = "Cuadrados"
 
@@ -74,6 +76,21 @@ def _rounded_rect_points(x1, y1, x2, y2, radius):
         x1, y1 + radius,
         x1, y1,
     ]
+
+
+def _cloud_points(cx, cy, rx, ry, lobes=8, bump=0.22, samples=160):
+    """Puntos de un contorno abultado tipo "nube" alrededor de una elipse.
+
+    El módulo del radio sólo abulta hacia afuera (nunca hacia adentro), para
+    que el contorno se vea como lóbulos redondeados en vez de una estrella.
+    """
+    pts = []
+    for i in range(samples):
+        angle = 2 * math.pi * i / samples
+        r_mod = 1 + bump * (0.5 + 0.5 * math.sin(lobes * angle))
+        pts.append(cx + rx * r_mod * math.cos(angle))
+        pts.append(cy + ry * r_mod * math.sin(angle))
+    return pts
 
 
 class MindMapCanvas(tk.Frame):
@@ -265,7 +282,14 @@ class MindMapCanvas(tk.Frame):
             self.canvas.coords(item, *self._connection_line_points(conn))
             selected = self.selected == ("conn", conn.id)
             width = conn.line_width * self._zoom + (3 if selected else 0)
-            self.canvas.itemconfig(item, width=max(1, width))
+            self.canvas.itemconfig(
+                item, width=max(1, width),
+                fill=self._connection_display_color(conn),
+                smooth=THEMES[self.theme].get("connector") != "elbow",
+            )
+
+    def _connection_display_color(self, conn: Connection) -> str:
+        return THEMES[self.theme].get("connector_color") or conn.color
 
     # ------------------------------------------------------------------ #
     # Paleta de colores
@@ -307,7 +331,8 @@ class MindMapCanvas(tk.Frame):
             for child_id, conn_id in children.get(root_id, []):
                 self._recolor_branch(child_id, next(branch_colors), visited, children)
                 self.connections[conn_id].color = self.nodes[child_id].color
-                self.canvas.itemconfig(self.conn_items[conn_id], fill=self.nodes[child_id].color)
+                self.canvas.itemconfig(self.conn_items[conn_id],
+                                        fill=self._connection_display_color(self.connections[conn_id]))
 
         self._set_status(f'Paleta "{name}" aplicada al mapa.')
 
@@ -320,7 +345,8 @@ class MindMapCanvas(tk.Frame):
         self._redraw_node(node)
         for child_id, conn_id in children.get(node_id, []):
             self.connections[conn_id].color = color
-            self.canvas.itemconfig(self.conn_items[conn_id], fill=color)
+            self.canvas.itemconfig(self.conn_items[conn_id],
+                                    fill=self._connection_display_color(self.connections[conn_id]))
             self._recolor_branch(child_id, color, visited, children)
 
     # ------------------------------------------------------------------ #
@@ -390,10 +416,45 @@ class MindMapCanvas(tk.Frame):
 
     def _draw_node(self, node: Node) -> None:
         theme = THEMES[self.theme]
-        if theme["node"] == "dot" and node.shape != "root":
+        if node.shape == "root" and theme.get("root") == "cloud":
+            self._draw_node_cloud(node)
+        elif theme["node"] == "dot" and node.shape != "root":
             self._draw_node_dot(node)
         else:
             self._draw_node_box(node, theme)
+
+    def _draw_node_cloud(self, node: Node) -> None:
+        base_font = self._font(node)
+        lines = node.text.split("\n") or [""]
+        text_w = max(base_font.measure(line) for line in lines)
+        text_h = 26 * len(lines)
+        tag = f"nid_{node.id}"
+
+        node.width = max(190, text_w + 100)
+        node.height = max(120, text_h + 80)
+
+        zoom = self._zoom
+        sx, sy = self._to_screen(node.x, node.y)
+        rx, ry = (node.width / 2) * zoom, (node.height / 2) * zoom
+        outline_width = max(2, round(2 * zoom))
+
+        shape_item = self.canvas.create_polygon(
+            _cloud_points(sx, sy, rx, ry),
+            fill=node.color, outline="#2b2b2b", width=outline_width,
+            smooth=True, splinesteps=6, tags=("node", tag),
+        )
+        render_font = self._font(node, scale=zoom)
+        text_item = self.canvas.create_text(
+            sx, sy, text=node.text, fill="#ffffff",
+            font=render_font, tags=("node", "node-text", tag),
+            width=max(1, rx * 1.1), justify="center",
+        )
+        self.node_items[node.id] = {
+            "shape": shape_item, "text": text_item,
+            "outline": ("#2b2b2b", outline_width),
+        }
+        self.canvas.tag_bind(tag, "<Enter>", lambda e: self.canvas.config(cursor="fleur"))
+        self.canvas.tag_bind(tag, "<Leave>", lambda e: self.canvas.config(cursor=""))
 
     def _draw_node_box(self, node: Node, theme: dict) -> None:
         base_font = self._font(node)
@@ -570,6 +631,9 @@ class MindMapCanvas(tk.Frame):
         b = self.nodes[conn.target_id]
         x1, y1 = self._to_screen(a.x, a.y)
         x2, y2 = self._to_screen(b.x, b.y)
+        if THEMES[self.theme].get("connector") == "elbow":
+            xm = (x1 + x2) / 2
+            return [x1, y1, xm, y1, xm, y2, x2, y2]
         dist = math.hypot(x2 - x1, y2 - y1) or 1
         px, py = -(y2 - y1) / dist, (x2 - x1) / dist
         offset = dist * 0.15
@@ -579,10 +643,11 @@ class MindMapCanvas(tk.Frame):
 
     def _draw_connection(self, conn: Connection) -> None:
         tag = f"cid_{conn.id}"
+        is_elbow = THEMES[self.theme].get("connector") == "elbow"
         line = self.canvas.create_line(
             *self._connection_line_points(conn),
-            fill=conn.color, width=max(1, conn.line_width * self._zoom), smooth=True,
-            capstyle=tk.ROUND, joinstyle=tk.ROUND,
+            fill=self._connection_display_color(conn), width=max(1, conn.line_width * self._zoom),
+            smooth=not is_elbow, capstyle=tk.ROUND, joinstyle=tk.ROUND,
             tags=("conn", tag),
         )
         self.canvas.tag_lower(line)
@@ -837,8 +902,14 @@ class MindMapCanvas(tk.Frame):
         if hex_color:
             self._snapshot_undo()
             conn.color = hex_color
-            self.canvas.itemconfig(self.conn_items[conn_id], fill=hex_color)
-            self._set_status(f"Color de conexión cambiado a {hex_color}.")
+            self.canvas.itemconfig(self.conn_items[conn_id], fill=self._connection_display_color(conn))
+            if THEMES[self.theme].get("connector_color"):
+                self._set_status(
+                    f"Color guardado ({hex_color}), pero el tema \"{self.theme}\" usa un color fijo "
+                    "para las conexiones."
+                )
+            else:
+                self._set_status(f"Color de conexión cambiado a {hex_color}.")
 
     def change_connection_width(self, conn_id: int, delta: int) -> None:
         self._snapshot_undo()
@@ -912,7 +983,8 @@ class MindMapCanvas(tk.Frame):
             if conn is not None:
                 conn.color = branch_color
                 conn.line_width = branch_width
-                self.canvas.itemconfig(self.conn_items[conn.id], fill=branch_color,
+                self.canvas.itemconfig(self.conn_items[conn.id],
+                                        fill=self._connection_display_color(conn),
                                         width=max(1, branch_width * self._zoom))
 
             self._place_outline_children(

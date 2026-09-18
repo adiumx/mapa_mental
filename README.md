@@ -55,9 +55,11 @@ python3 main.py
   - *Cuadrados*: cajas redondeadas con relleno de color y texto blanco (por defecto).
   - *Contorno*: cajas con fondo blanco, borde y texto del color de la rama.
   - *Oscuro*: igual que Cuadrados, pero con el lienzo en fondo oscuro.
-  - *Ramas*: los nodos de rama son un punto de color con el texto al lado
-    (el nodo central sigue siendo una caja), para un estilo más ligero tipo
-    "árbol de ideas".
+  - *Ramas*: los nodos de rama son un punto de color con el texto al lado,
+    y el nodo central es una "nube" de bordes ondulados, para un estilo
+    más ligero e ilustrado, tipo "árbol de ideas".
+  - *Angular*: cajas de color con conexiones en ángulo recto de color fijo
+    (negro), como un diagrama de flujo o esquema clásico.
 - **Paleta de colores** (barra de herramientas): elige entre varios sets de
   colores (Vivo, Océano, Atardecer, Pastel, Clásico). Al seleccionar una, se
   recolorea todo el mapa actual por ramas (cada rama principal y sus

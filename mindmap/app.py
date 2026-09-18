@@ -138,7 +138,7 @@ class MindMapApp(tk.Tk):
             "Archivo > Generar desde texto / Markdown: pega texto o Markdown y conviértelo\n"
             "automáticamente en un mapa mental gráfico (un nodo por oración, viñeta o título).\n\n"
             "Tema (barra de herramientas): cambia el estilo visual de los nodos y conexiones\n"
-            "(Cuadrados, Contorno, Oscuro, Ramas).\n\n"
+            "(Cuadrados, Contorno, Oscuro, Ramas, Angular).\n\n"
             "Paleta de colores (barra de herramientas): elige un set de colores; se aplica\n"
             "a todo el mapa actual y a los nodos que generes de ahí en adelante. El botón\n"
             "\"Nueva paleta...\" te deja crear y guardar tu propia combinación de colores.\n\n"
