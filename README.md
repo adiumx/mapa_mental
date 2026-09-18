@@ -51,6 +51,10 @@ python3 main.py
     oración se convierte en un nodo.
   - Cada rama principal recibe un color distinto, aplicado también a sus
     conexiones, y luego se puede seguir editando manualmente.
+  - Las ramas se reparten a la izquierda y a la derecha del nodo central
+    (balanceando el tamaño de cada subárbol) en vez de en círculo, así las
+    conexiones nunca se cruzan entre sí, y salen del borde de cada nodo con
+    una curva suave en vez de atravesar el centro.
 - **Tema** (barra de herramientas): cambia el estilo visual de todo el mapa:
   - *Cuadrados*: cajas redondeadas con relleno de color y texto blanco (por defecto).
   - *Contorno*: cajas con fondo blanco, borde y texto del color de la rama.

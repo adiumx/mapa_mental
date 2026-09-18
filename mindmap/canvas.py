@@ -53,11 +53,46 @@ MIN_ZOOM = 0.3
 MAX_ZOOM = 3.0
 
 
-def _rect_clearance(width, height, ux, uy):
-    """Distancia del centro al borde de un rectángulo width x height en la dirección (ux, uy)."""
-    tx = (width / 2) / abs(ux) if abs(ux) > 1e-6 else float("inf")
-    ty = (height / 2) / abs(uy) if abs(uy) > 1e-6 else float("inf")
-    return min(tx, ty)
+def _cubic_bezier_points(x1, y1, x2, y2, samples=28):
+    """Puntos de una curva de Bézier cúbica de (x1,y1) a (x2,y2), con tangente
+    horizontal en ambos extremos (como sale/entra un cable a una caja)."""
+    dx = x2 - x1
+    sign = 1 if dx >= 0 else -1
+    offset = max(abs(dx) * 0.5, 30)
+    c1x, c1y = x1 + sign * offset, y1
+    c2x, c2y = x2 - sign * offset, y2
+
+    pts = []
+    for i in range(samples + 1):
+        t = i / samples
+        mt = 1 - t
+        x = mt ** 3 * x1 + 3 * mt ** 2 * t * c1x + 3 * mt * t ** 2 * c2x + t ** 3 * x2
+        y = mt ** 3 * y1 + 3 * mt ** 2 * t * c1y + 3 * mt * t ** 2 * c2y + t ** 3 * y2
+        pts.extend([x, y])
+    return pts
+
+
+def _count_leaves(outline_node) -> int:
+    """Cantidad de hojas en el subárbol de un OutlineNode (mínimo 1)."""
+    if not outline_node.children:
+        return 1
+    return sum(_count_leaves(c) for c in outline_node.children)
+
+
+def _split_by_weight(children):
+    """Reparte una lista de OutlineNode en dos lados (derecha, izquierda),
+    balanceando por cantidad de hojas y preservando el orden original en cada lado."""
+    right, left = [], []
+    right_w = left_w = 0
+    for child in children:
+        w = _count_leaves(child)
+        if right_w <= left_w:
+            right.append(child)
+            right_w += w
+        else:
+            left.append(child)
+            left_w += w
+    return right, left
 
 
 def _rounded_rect_points(x1, y1, x2, y2, radius):
@@ -283,9 +318,7 @@ class MindMapCanvas(tk.Frame):
             selected = self.selected == ("conn", conn.id)
             width = conn.line_width * self._zoom + (3 if selected else 0)
             self.canvas.itemconfig(
-                item, width=max(1, width),
-                fill=self._connection_display_color(conn),
-                smooth=THEMES[self.theme].get("connector") != "elbow",
+                item, width=max(1, width), fill=self._connection_display_color(conn),
             )
 
     def _connection_display_color(self, conn: Connection) -> str:
@@ -626,28 +659,43 @@ class MindMapCanvas(tk.Frame):
         self.select_connection(conn.id)
         return conn
 
+    def _node_anchor(self, node: Node, dx_sign: int) -> Tuple[float, float]:
+        """Punto de anclaje en el borde del nodo, del lado que mira hacia dx_sign
+        (+1 = derecha, -1 = izquierda), para que la conexión nazca/llegue al
+        borde en vez de atravesar el centro."""
+        theme = THEMES[self.theme]
+        sx, sy = self._to_screen(node.x, node.y)
+        if theme["node"] == "dot" and node.shape != "root":
+            text_side_sign = 1 if self._dot_text_side(node) == "right" else -1
+            if dx_sign == text_side_sign:
+                # el texto queda de este mismo lado: hay que pasar de largo,
+                # si no la línea nace encima de las letras en vez de en el punto
+                half = (node.width - 7 + 6) * self._zoom
+            else:
+                half = 7 * self._zoom
+        else:
+            half = (node.width / 2) * self._zoom
+        return sx + dx_sign * half, sy
+
     def _connection_line_points(self, conn: Connection):
         a = self.nodes[conn.source_id]
         b = self.nodes[conn.target_id]
-        x1, y1 = self._to_screen(a.x, a.y)
-        x2, y2 = self._to_screen(b.x, b.y)
+        dx_sign = 1 if b.x >= a.x else -1
+        x1, y1 = self._node_anchor(a, dx_sign)
+        x2, y2 = self._node_anchor(b, -dx_sign)
+
         if THEMES[self.theme].get("connector") == "elbow":
             xm = (x1 + x2) / 2
             return [x1, y1, xm, y1, xm, y2, x2, y2]
-        dist = math.hypot(x2 - x1, y2 - y1) or 1
-        px, py = -(y2 - y1) / dist, (x2 - x1) / dist
-        offset = dist * 0.15
-        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-        cx, cy = mx + px * offset, my + py * offset
-        return [x1, y1, cx, cy, x2, y2]
+
+        return _cubic_bezier_points(x1, y1, x2, y2)
 
     def _draw_connection(self, conn: Connection) -> None:
         tag = f"cid_{conn.id}"
-        is_elbow = THEMES[self.theme].get("connector") == "elbow"
         line = self.canvas.create_line(
             *self._connection_line_points(conn),
             fill=self._connection_display_color(conn), width=max(1, conn.line_width * self._zoom),
-            smooth=not is_elbow, capstyle=tk.ROUND, joinstyle=tk.ROUND,
+            smooth=False, capstyle=tk.ROUND, joinstyle=tk.ROUND,
             tags=("conn", tag),
         )
         self.canvas.tag_lower(line)
@@ -948,37 +996,56 @@ class MindMapCanvas(tk.Frame):
 
             accent = PALETTES[self.palette_name]["accent"]
             root_node = self.new_node(x=cx, y=cy, text=outline.text, color=accent, shape="root")
-            self._place_outline_children(root_node, outline.children, cx, cy, 0, 2 * math.pi, level=1)
+
+            # Reparte las ramas principales entre el lado derecho e izquierdo
+            # (balanceando por tamaño de cada subárbol) en vez de un círculo
+            # completo: así las ramas no se cruzan entre sí.
+            right_children, left_children = _split_by_weight(outline.children)
+            leaf_spacing = 60
+            right_height = sum(_count_leaves(c) for c in right_children) * leaf_spacing
+            left_height = sum(_count_leaves(c) for c in left_children) * leaf_spacing
+
+            self._layout_subtree(root_node, right_children, +1, 1, cy - right_height / 2,
+                                  None, leaf_spacing)
+            self._layout_subtree(root_node, left_children, -1, 1, cy - left_height / 2,
+                                  None, leaf_spacing)
+
             self.clear_selection()
         finally:
             self._suspend_undo = False
         self._set_status(f"Mapa generado con {len(self.nodes)} nodos a partir del texto.")
         return True
 
-    def _place_outline_children(self, parent_node: Node, children: list,
-                                 cx: float, cy: float, angle_start: float, angle_end: float,
-                                 level: int, color: Optional[str] = None) -> None:
-        if not children:
+    def _leaf_box_width(self, text: str) -> float:
+        """Ancho aproximado (sin zoom) que tendrá una caja de nodo de rama con este texto."""
+        font = self._font()
+        lines = text.split("\n") or [""]
+        text_w = max(font.measure(line) for line in lines)
+        return max(50, text_w + 32)
+
+    def _layout_subtree(self, parent_node: Node, outline_children: list, x_dir: int,
+                         level: int, top_y: float, color: Optional[str],
+                         leaf_spacing: float = 60, min_gap: float = 60) -> None:
+        """Coloca outline_children (y sus descendientes) en una columna vertical
+        hacia x_dir (+1 derecha, -1 izquierda), apilados sin superponerse: cada
+        hijo recibe una franja vertical proporcional al tamaño de su propio
+        subárbol (cantidad de hojas), y su distancia horizontal al padre se
+        calcula con el ancho real de ambas cajas para no encimarlas."""
+        if not outline_children:
             return
-        count = len(children)
-        step = (angle_end - angle_start) / count
+        slot_start = top_y
         branch_width = max(1, 6 - (level - 1))
 
-        for i, outline_child in enumerate(children):
-            angle = angle_start + step * (i + 0.5)
-            if level == 1 and parent_node.shape == "root":
-                # deja espacio suficiente para que el hijo no quede pegado a un
-                # nodo raíz ancho (título largo) sin lugar para su propio texto
-                radius = _rect_clearance(
-                    parent_node.width, parent_node.height, math.cos(angle), math.sin(angle)
-                ) + 110
-            else:
-                radius = 170 * level
-            x = cx + radius * math.cos(angle)
-            y = cy + radius * math.sin(angle)
+        for outline_child in outline_children:
+            leaves = _count_leaves(outline_child)
+            slot_height = leaves * leaf_spacing
+            child_width_estimate = self._leaf_box_width(outline_child.text)
+            gap = parent_node.width / 2 + min_gap + child_width_estimate / 2
+            child_x = parent_node.x + x_dir * gap
+            child_y = slot_start + slot_height / 2
             branch_color = color or next(self._color_cycle)
 
-            child_node = self.new_node(x=x, y=y, text=outline_child.text, color=branch_color)
+            child_node = self.new_node(x=child_x, y=child_y, text=outline_child.text, color=branch_color)
             conn = self.new_connection(parent_node.id, child_node.id)
             if conn is not None:
                 conn.color = branch_color
@@ -987,11 +1054,9 @@ class MindMapCanvas(tk.Frame):
                                         fill=self._connection_display_color(conn),
                                         width=max(1, branch_width * self._zoom))
 
-            self._place_outline_children(
-                child_node, outline_child.children, cx, cy,
-                angle_start + step * i, angle_start + step * (i + 1),
-                level + 1, branch_color,
-            )
+            self._layout_subtree(child_node, outline_child.children, x_dir, level + 1,
+                                  slot_start, branch_color, leaf_spacing, min_gap)
+            slot_start += slot_height
 
     # ------------------------------------------------------------------ #
     # Persistencia
