@@ -180,6 +180,8 @@ class MindMapCanvas(tk.Frame):
         self._pan_y = 0.0
 
         self.selected: Optional[Tuple[str, int]] = None
+        self.selected_nodes: set = set()
+        self._marquee_rect = None
         self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
         self._connect_temp_line = None
         self._connect_source: Optional[int] = None
@@ -210,9 +212,10 @@ class MindMapCanvas(tk.Frame):
         self._space_held = False
 
         self._set_status(
-            "Doble clic: crear nodo · Arrastrar: mover · Rueda del mouse: zoom · Espacio + "
-            "arrastrar: desplazarse · Botón \"Conectar nodos\" (o Shift + arrastrar): crear "
-            "una conexión · Clic derecho: opciones"
+            "Doble clic: crear nodo · Arrastrar: mover · Ctrl + clic o arrastrar sobre el "
+            "lienzo: seleccionar varios nodos · Rueda del mouse: zoom · Espacio + arrastrar: "
+            "desplazarse · Botón \"Conectar nodos\" (o Shift + arrastrar): crear una conexión "
+            "· Clic derecho: opciones"
         )
 
     # ------------------------------------------------------------------ #
@@ -658,12 +661,11 @@ class MindMapCanvas(tk.Frame):
         return "right" if node.x >= parent.x else "left"
 
     def _redraw_node(self, node: Node) -> None:
-        was_selected = self.selected == ("node", node.id)
+        was_selected = node.id in self.selected_nodes
         self.canvas.delete(f"nid_{node.id}")
         self.node_items.pop(node.id, None)
         self._draw_node(node)
         if was_selected:
-            self.selected = ("node", node.id)
             self._apply_node_selection_style(node.id, True)
         self._update_connections_for_node(node.id)
 
@@ -735,8 +737,8 @@ class MindMapCanvas(tk.Frame):
         finally:
             self._suspend_undo = previous_suspend
 
-        if self.selected == ("node", node_id):
-            self.selected = None
+        self.selected_nodes.discard(node_id)
+        self._sync_single_selection()
 
     # ------------------------------------------------------------------ #
     # Creación / dibujo de conexiones
@@ -827,21 +829,30 @@ class MindMapCanvas(tk.Frame):
     # Selección visual
     # ------------------------------------------------------------------ #
     def clear_selection(self) -> None:
-        if self.selected is None:
-            return
-        kind, item_id = self.selected
-        if kind == "node" and item_id in self.node_items:
-            self._apply_node_selection_style(item_id, False)
-        elif kind == "conn" and item_id in self.conn_items:
+        for node_id in self.selected_nodes:
+            if node_id in self.node_items:
+                self._apply_node_selection_style(node_id, False)
+        self.selected_nodes = set()
+        if self.selected is not None and self.selected[0] == "conn":
+            item_id = self.selected[1]
             conn = self.connections.get(item_id)
-            if conn:
+            if conn and item_id in self.conn_items:
                 self.canvas.itemconfig(self.conn_items[item_id],
                                         width=max(1, conn.line_width * self._zoom))
         self.selected = None
 
+    def _sync_single_selection(self) -> None:
+        """Mantiene self.selected coherente con self.selected_nodes: apunta al
+        único nodo seleccionado, o queda en None si hay 0 o varios."""
+        if len(self.selected_nodes) == 1:
+            self.selected = ("node", next(iter(self.selected_nodes)))
+        elif self.selected is not None and self.selected[0] == "node":
+            self.selected = None
+
     def select_node(self, node_id: int) -> None:
         self.clear_selection()
         self.selected = ("node", node_id)
+        self.selected_nodes = {node_id}
         self._apply_node_selection_style(node_id, True)
         self._set_status(f"Nodo seleccionado: \"{self.nodes[node_id].text}\"")
 
@@ -853,7 +864,71 @@ class MindMapCanvas(tk.Frame):
                                 width=max(1, conn.line_width * self._zoom) + 3)
         self._set_status("Conexión seleccionada. Usa el botón de color para cambiarla.")
 
+    def toggle_node_selection(self, node_id: int) -> None:
+        """Ctrl+clic: agrega o quita un nodo de la selección múltiple sin
+        afectar a los demás nodos seleccionados."""
+        if self.selected is not None and self.selected[0] == "conn":
+            self.clear_selection()
+        if node_id in self.selected_nodes:
+            self.selected_nodes.discard(node_id)
+            self._apply_node_selection_style(node_id, False)
+        else:
+            self.selected_nodes.add(node_id)
+            self._apply_node_selection_style(node_id, True)
+        self._sync_single_selection()
+        if self.selected_nodes:
+            self._set_status(f"{len(self.selected_nodes)} nodo(s) seleccionados.")
+        else:
+            self._set_status("Selección vacía.")
+
+    def _apply_multi_selection(self, node_ids: set, additive: bool) -> None:
+        """Aplica el resultado de un recuadro de selección (marquee): reemplaza
+        la selección actual, o la amplía si additive=True (Ctrl+arrastrar)."""
+        new_selection = (self.selected_nodes | node_ids) if additive else set(node_ids)
+        added = new_selection - self.selected_nodes
+        removed = self.selected_nodes - new_selection
+        self.selected_nodes = new_selection
+        for node_id in added:
+            if node_id in self.node_items:
+                self._apply_node_selection_style(node_id, True)
+        for node_id in removed:
+            if node_id in self.node_items:
+                self._apply_node_selection_style(node_id, False)
+        self._sync_single_selection()
+        if self.selected_nodes:
+            self._set_status(f"{len(self.selected_nodes)} nodo(s) seleccionados.")
+        else:
+            self._set_status("Selección vacía.")
+
+    def change_selected_nodes_color(self) -> None:
+        if not self.selected_nodes:
+            return
+        sample = self.nodes[next(iter(self.selected_nodes))]
+        _, hex_color = colorchooser.askcolor(
+            color=sample.color, title="Color de los nodos seleccionados", parent=self,
+        )
+        if not hex_color:
+            return
+        self._snapshot_undo()
+        for node_id in list(self.selected_nodes):
+            node = self.nodes[node_id]
+            node.color = hex_color
+            self._redraw_node(node)
+        self._set_status(f"Color cambiado en {len(self.selected_nodes)} nodos.")
+
     def delete_selected(self) -> None:
+        if len(self.selected_nodes) > 1:
+            ids = list(self.selected_nodes)
+            self._snapshot_undo()
+            previous_suspend = self._suspend_undo
+            self._suspend_undo = True
+            try:
+                for node_id in ids:
+                    self.delete_node(node_id)
+            finally:
+                self._suspend_undo = previous_suspend
+            self._set_status(f"{len(ids)} nodos eliminados.")
+            return
         if self.selected is None:
             return
         kind, item_id = self.selected
@@ -901,10 +976,12 @@ class MindMapCanvas(tk.Frame):
             return
 
         shift_held = bool(event.state & 0x0001)
+        ctrl_held = bool(event.state & 0x0004)
 
         if node_id is not None:
-            self.select_node(node_id)
             if shift_held:
+                # Shift siempre sirve para conectar, sin importar la selección múltiple.
+                self.select_node(node_id)
                 self._drag = {"mode": "connect", "node_id": node_id,
                                "last_x": event.x, "last_y": event.y}
                 node = self.nodes[node_id]
@@ -913,10 +990,21 @@ class MindMapCanvas(tk.Frame):
                     sx, sy, event.x, event.y,
                     fill="#999999", width=2, dash=(4, 2),
                 )
-            else:
+                return
+            if ctrl_held:
+                self.toggle_node_selection(node_id)
+                self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
+                return
+            if node_id in self.selected_nodes and len(self.selected_nodes) > 1:
+                # El nodo ya forma parte de una selección múltiple: arrastrar todo el grupo.
                 self._snapshot_undo()
-                self._drag = {"mode": "move", "node_id": node_id,
+                self._drag = {"mode": "move", "node_id": node_id, "group": set(self.selected_nodes),
                                "last_x": event.x, "last_y": event.y}
+                return
+            self.select_node(node_id)
+            self._snapshot_undo()
+            self._drag = {"mode": "move", "node_id": node_id, "group": None,
+                           "last_x": event.x, "last_y": event.y}
             return
 
         conn_id = self._conn_id_at(event.x, event.y)
@@ -925,8 +1013,14 @@ class MindMapCanvas(tk.Frame):
             self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
             return
 
-        self.clear_selection()
-        self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
+        if not ctrl_held:
+            self.clear_selection()
+        self._drag = {"mode": "marquee", "node_id": None, "last_x": event.x, "last_y": event.y,
+                       "start_x": event.x, "start_y": event.y, "additive": ctrl_held}
+        self._marquee_rect = self.canvas.create_rectangle(
+            event.x, event.y, event.x, event.y,
+            outline="#5b8def", dash=(4, 2), width=1,
+        )
 
     def _on_canvas_motion(self, event) -> None:
         mode = self._drag.get("mode")
@@ -939,15 +1033,17 @@ class MindMapCanvas(tk.Frame):
             self._drag["last_x"], self._drag["last_y"] = event.x, event.y
             return
         if mode == "move":
-            node_id = self._drag["node_id"]
-            node = self.nodes[node_id]
+            group = self._drag.get("group") or {self._drag["node_id"]}
             dx = (event.x - self._drag["last_x"]) / self._zoom
             dy = (event.y - self._drag["last_y"]) / self._zoom
-            node.x += dx
-            node.y += dy
-            self.canvas.move(f"nid_{node_id}",
-                              event.x - self._drag["last_x"], event.y - self._drag["last_y"])
-            self._update_connections_for_node(node_id)
+            screen_dx = event.x - self._drag["last_x"]
+            screen_dy = event.y - self._drag["last_y"]
+            for node_id in group:
+                node = self.nodes[node_id]
+                node.x += dx
+                node.y += dy
+                self.canvas.move(f"nid_{node_id}", screen_dx, screen_dy)
+                self._update_connections_for_node(node_id)
             self._drag["last_x"], self._drag["last_y"] = event.x, event.y
         elif mode == "connect" and self._connect_temp_line is not None:
             node = self.nodes[self._drag["node_id"]]
@@ -956,6 +1052,9 @@ class MindMapCanvas(tk.Frame):
             target_id = self._node_id_at(event.x, event.y)
             self.canvas.config(cursor="hand2" if target_id not in (None, self._drag["node_id"])
                                 else "X_cursor")
+        elif mode == "marquee":
+            x0, y0 = self._drag["start_x"], self._drag["start_y"]
+            self.canvas.coords(self._marquee_rect, x0, y0, event.x, event.y)
 
     def _on_canvas_release(self, event) -> None:
         mode = self._drag.get("mode")
@@ -974,6 +1073,26 @@ class MindMapCanvas(tk.Frame):
                 self.new_connection(source_id, target_id)
             else:
                 self._set_status("Conexión cancelada: suelta sobre otro nodo para conectar.")
+            self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
+            return
+        if mode == "marquee":
+            x0, y0 = self._drag["start_x"], self._drag["start_y"]
+            x1, y1 = event.x, event.y
+            if self._marquee_rect is not None:
+                self.canvas.delete(self._marquee_rect)
+                self._marquee_rect = None
+            rx0, rx1 = sorted((x0, x1))
+            ry0, ry1 = sorted((y0, y1))
+            if rx1 - rx0 > 3 or ry1 - ry0 > 3:
+                matched = set()
+                for node_id, node in self.nodes.items():
+                    sx, sy = self._to_screen(node.x, node.y)
+                    hw, hh = (node.width / 2) * self._zoom, (node.height / 2) * self._zoom
+                    if sx + hw >= rx0 and sx - hw <= rx1 and sy + hh >= ry0 and sy - hh <= ry1:
+                        matched.add(node_id)
+                self._apply_multi_selection(matched, additive=self._drag.get("additive", False))
+            self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
+            return
         self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
 
     def _on_canvas_double_click(self, event) -> None:
@@ -987,8 +1106,11 @@ class MindMapCanvas(tk.Frame):
     def _on_canvas_right_click(self, event) -> None:
         node_id = self._node_id_at(event.x, event.y)
         if node_id is not None:
-            self.select_node(node_id)
-            self._show_node_menu(event, node_id)
+            if node_id in self.selected_nodes and len(self.selected_nodes) > 1:
+                self._show_multi_node_menu(event)
+            else:
+                self.select_node(node_id)
+                self._show_node_menu(event, node_id)
             return
         conn_id = self._conn_id_at(event.x, event.y)
         if conn_id is not None:
@@ -1025,6 +1147,15 @@ class MindMapCanvas(tk.Frame):
 
         menu.add_separator()
         menu.add_command(label="Eliminar nodo", command=lambda: self.delete_node(node_id))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _show_multi_node_menu(self, event) -> None:
+        count = len(self.selected_nodes)
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label=f"Cambiar color de los {count} nodos",
+                          command=self.change_selected_nodes_color)
+        menu.add_separator()
+        menu.add_command(label=f"Eliminar {count} nodos", command=self.delete_selected)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _show_conn_menu(self, event, conn_id: int) -> None:
@@ -1235,6 +1366,7 @@ class MindMapCanvas(tk.Frame):
         self.node_items.clear()
         self.conn_items.clear()
         self.selected = None
+        self.selected_nodes = set()
         self._node_id_seq = itertools.count(1)
         self._conn_id_seq = itertools.count(1)
         self._zoom = 1.0

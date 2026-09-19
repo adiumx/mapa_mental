@@ -28,6 +28,16 @@ python3 main.py
 - **Doble clic en un espacio vacío**: crea un nodo nuevo.
 - **Doble clic sobre un nodo**: renombrarlo.
 - **Arrastrar un nodo**: moverlo por el lienzo.
+- **Selección múltiple de nodos**:
+  - **Ctrl + clic** sobre un nodo: lo agrega o lo quita de la selección, sin
+    afectar a los demás.
+  - **Arrastrar sobre un espacio vacío**: dibuja un recuadro que selecciona
+    todos los nodos que toque (mantén **Ctrl** mientras arrastras para sumar
+    a la selección actual en vez de reemplazarla).
+  - Con varios nodos seleccionados: arrastrar cualquiera de ellos mueve todo
+    el grupo junto, **Supr/Backspace** los elimina a todos, y el botón
+    "Color de nodo" (o "Cambiar color..." del clic derecho) los recolorea a
+    todos a la vez. Cada una de estas acciones es un solo paso de deshacer.
 - **Rueda del mouse**: acercar o alejar (zoom), centrado en la posición del cursor.
 - **Mantener Espacio y arrastrar**: desplazarse por el lienzo (paneo) sin mover nodos.
 - **Botón "Conectar nodos"** (barra de herramientas): actívalo, haz clic en el nodo

@@ -158,6 +158,9 @@ class MindMapApp(tk.Tk):
         self.mind_canvas.rename_node(node_id)
 
     def _node_color_button(self):
+        if len(self.mind_canvas.selected_nodes) > 1:
+            self.mind_canvas.change_selected_nodes_color()
+            return
         node_id = self.mind_canvas.selected_node_id()
         if node_id is None:
             messagebox.showinfo("Color de nodo", "Selecciona primero un nodo.")
