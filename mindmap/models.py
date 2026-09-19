@@ -19,6 +19,9 @@ class Node:
     # normal del tema (caja/punto/nube).
     custom_shape: Optional[List[List[float]]] = None
     collapsed: bool = False
+    # Nota larga adjunta al nodo: no se dibuja dentro del nodo (eso desordenaría
+    # el layout), sino que se indica con un ícono y se lee al pasar el mouse.
+    note: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -32,6 +35,7 @@ class Node:
             "height": self.height,
             "custom_shape": self.custom_shape,
             "collapsed": self.collapsed,
+            "note": self.note,
         }
 
     @classmethod
@@ -47,6 +51,7 @@ class Node:
             height=data.get("height", 56),
             custom_shape=data.get("custom_shape"),
             collapsed=data.get("collapsed", False),
+            note=data.get("note", ""),
         )
 
 

@@ -38,6 +38,14 @@ python3 main.py
     el grupo junto, **Supr/Backspace** los elimina a todos, y el botón
     "Color de nodo" (o "Cambiar color..." del clic derecho) los recolorea a
     todos a la vez. Cada una de estas acciones es un solo paso de deshacer.
+- **Notas en los nodos**: clic derecho sobre un nodo → *Agregar nota...* para
+  escribir texto largo asociado a esa idea. El nodo muestra entonces un ícono
+  de hoja sobre su borde superior, y **basta con pasar el mouse por encima
+  para leer la nota completa**, sin abrir nada. Un clic sobre el ícono abre el
+  editor. La nota se guarda con el mapa.
+  - La nota no se dibuja dentro del nodo a propósito: si el nodo creciera con
+    su texto, se desacomodaría el resto del mapa (es el problema conocido de
+    los *callouts* de otras herramientas).
 - **Colapsar / expandir ramas**: los nodos que tienen hijos muestran un círculo
   pequeño en su borde. Haz clic en él para ocultar o volver a mostrar toda su
   rama; cuando está colapsada, el círculo indica cuántos nodos quedaron

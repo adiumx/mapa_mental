@@ -183,6 +183,9 @@ class MindMapCanvas(tk.Frame):
         self.selected_nodes: set = set()
         self._hidden_nodes: set = set()
         self._marquee_rect = None
+        self._tooltip_window = None
+        self._tooltip_node_id: Optional[int] = None
+        self._tooltip_after = None
         self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
         self._connect_temp_line = None
         self._connect_source: Optional[int] = None
@@ -207,6 +210,8 @@ class MindMapCanvas(tk.Frame):
         self.canvas.bind("<Button-5>", self._on_mousewheel)
         self.canvas.bind("<KeyPress-space>", self._on_space_press)
         self.canvas.bind("<KeyRelease-space>", self._on_space_release)
+        self.canvas.bind("<Motion>", self._on_canvas_hover)
+        self.canvas.bind("<Leave>", lambda e: self._hide_note_tooltip())
         self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
         self.canvas.focus_set()
 
@@ -266,6 +271,7 @@ class MindMapCanvas(tk.Frame):
     # Zoom con la rueda del mouse
     # ------------------------------------------------------------------ #
     def _on_mousewheel(self, event) -> None:
+        self._hide_note_tooltip()
         delta = getattr(event, "delta", 0)
         if delta:
             factor = 1.1 if delta > 0 else (1 / 1.1)
@@ -486,7 +492,38 @@ class MindMapCanvas(tk.Frame):
             self._draw_node_dot(node)
         else:
             self._draw_node_box(node, theme)
+        self._draw_note_indicator(node)
         self._draw_collapse_badge(node)
+
+    def _draw_note_indicator(self, node: Node) -> None:
+        """Ícono de "hoja" en la esquina del nodo cuando tiene una nota.
+
+        La nota no se dibuja dentro del nodo a propósito: agrandar el nodo con
+        su texto rompería el layout (es justo lo que hace que los "callout" de
+        otras herramientas desplacen el resto del mapa)."""
+        if not node.note.strip():
+            return
+        w = max(5.0, 6 * self._zoom)
+        h = max(6.0, 7.5 * self._zoom)
+        # Centrado sobre el borde superior: ahí no hay conexiones (que salen a
+        # media altura) ni botón de colapsar, y funciona igual en todos los
+        # temas, incluidos el punto y la nube.
+        sx, sy = self._to_screen(node.x, node.y)
+        cx, cy = sx, sy - (node.height / 2) * self._zoom
+        tags = ("node", f"nid_{node.id}", f"note_{node.id}")
+
+        self.canvas.create_rectangle(
+            cx - w, cy - h, cx + w, cy + h,
+            fill="#ffffff", outline=node.color, width=max(1, round(1.5 * self._zoom)),
+            tags=tags,
+        )
+        line_width = max(1, round(self._zoom))
+        for i in range(3):
+            ly = cy - h * 0.45 + i * (h * 0.45)
+            self.canvas.create_line(
+                cx - w * 0.5, ly, cx + w * 0.5, ly,
+                fill=node.color, width=line_width, tags=tags,
+            )
 
     # ------------------------------------------------------------------ #
     # Jerarquía: colapsar / expandir ramas
@@ -569,6 +606,107 @@ class MindMapCanvas(tk.Frame):
                 cx - radius * 0.45, ay, cx + radius * 0.45, ay,
                 fill=node.color, width=max(1, round(2 * self._zoom)), tags=tags,
             )
+
+    # ------------------------------------------------------------------ #
+    # Notas adjuntas a un nodo
+    # ------------------------------------------------------------------ #
+    def edit_node_note(self, node_id: int) -> None:
+        node = self.nodes[node_id]
+        dialog = tk.Toplevel(self)
+        dialog.title(f'Nota de "{node.text}"')
+        dialog.geometry("520x400")
+        dialog.minsize(360, 260)
+        dialog.transient(self.winfo_toplevel())
+
+        # Los botones van primero y anclados abajo para que no se salgan de la
+        # ventana cuando el cuadro de texto crece.
+        buttons = tk.Frame(dialog)
+        buttons.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=8)
+
+        tk.Label(
+            dialog, justify="left",
+            text="Nota del nodo. No se dibuja en el mapa: el nodo muestra un ícono\n"
+                 "y la nota se lee al pasar el mouse por encima.",
+        ).pack(anchor="w", padx=10, pady=(10, 4))
+
+        text_frame = tk.Frame(dialog)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        text_widget = tk.Text(text_frame, wrap="word", undo=True, height=10)
+        scrollbar = tk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        text_widget.insert("1.0", node.note)
+        text_widget.focus_set()
+
+        def save():
+            self.set_node_note(node_id, text_widget.get("1.0", "end"))
+            dialog.destroy()
+
+        def remove():
+            self.set_node_note(node_id, "")
+            dialog.destroy()
+
+        tk.Button(buttons, text="Guardar", command=save).pack(side=tk.RIGHT, padx=4)
+        tk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side=tk.RIGHT)
+        if node.note.strip():
+            tk.Button(buttons, text="Quitar nota", command=remove).pack(side=tk.LEFT)
+
+        dialog.grab_set()
+
+    def set_node_note(self, node_id: int, note: str) -> None:
+        node = self.nodes[node_id]
+        new_note = note.strip()
+        if new_note == node.note:
+            return
+        self._snapshot_undo()
+        node.note = new_note
+        self._redraw_node(node)
+        self._set_status(f'Nota {"guardada en" if new_note else "quitada de"} "{node.text}".')
+
+    def _note_node_id_at(self, x: float, y: float) -> Optional[int]:
+        for item in self.canvas.find_overlapping(x - 2, y - 2, x + 2, y + 2):
+            for tag in self.canvas.gettags(item):
+                if tag.startswith("note_"):
+                    return int(tag.split("_", 1)[1])
+        return None
+
+    def _on_canvas_hover(self, event) -> None:
+        """Muestra la nota del nodo bajo el cursor, como hace Freeplane: poder
+        leerla sin abrir nada es lo que evita que las notas se olviden."""
+        node_id = self._node_id_at(event.x, event.y)
+        if node_id is None or not self.nodes[node_id].note.strip():
+            self._hide_note_tooltip()
+            return
+        if node_id == self._tooltip_node_id:
+            return
+        self._hide_note_tooltip()
+        self._tooltip_node_id = node_id
+        self._tooltip_after = self.after(
+            450, lambda: self._show_note_tooltip(node_id, event.x_root, event.y_root))
+
+    def _show_note_tooltip(self, node_id: int, x_root: int, y_root: int) -> None:
+        node = self.nodes.get(node_id)
+        if node is None or not node.note.strip() or self._tooltip_node_id != node_id:
+            return
+        tip = tk.Toplevel(self)
+        tip.overrideredirect(True)
+        tip.attributes("-topmost", True)
+        tk.Label(
+            tip, text=node.note, justify="left", wraplength=320,
+            background="#fdf6d8", relief="solid", borderwidth=1, padx=8, pady=6,
+        ).pack()
+        tip.geometry(f"+{x_root + 14}+{y_root + 18}")
+        self._tooltip_window = tip
+
+    def _hide_note_tooltip(self) -> None:
+        if self._tooltip_after is not None:
+            self.after_cancel(self._tooltip_after)
+            self._tooltip_after = None
+        if self._tooltip_window is not None:
+            self._tooltip_window.destroy()
+            self._tooltip_window = None
+        self._tooltip_node_id = None
 
     def _move_group_for(self, node_ids: set) -> set:
         """Al arrastrar un nodo colapsado, su rama oculta tiene que viajar con él
@@ -1121,9 +1259,17 @@ class MindMapCanvas(tk.Frame):
             self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
             return
 
+        self._hide_note_tooltip()
+
         badge_node_id = self._badge_node_id_at(event.x, event.y)
         if badge_node_id is not None:
             self.toggle_collapse(badge_node_id)
+            self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
+            return
+
+        note_node_id = self._note_node_id_at(event.x, event.y)
+        if note_node_id is not None:
+            self.edit_node_note(note_node_id)
             self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
             return
 
@@ -1284,6 +1430,8 @@ class MindMapCanvas(tk.Frame):
         menu.add_command(label="Renombrar", command=lambda: self.rename_node(node_id))
         menu.add_command(label="Cambiar color del nodo",
                           command=lambda: self.change_node_color(node_id))
+        note_label = "Editar nota..." if node.note.strip() else "Agregar nota..."
+        menu.add_command(label=note_label, command=lambda: self.edit_node_note(node_id))
         shape_label = "Convertir en nodo de rama" if node.shape == "root" else "Convertir en nodo central"
         menu.add_command(label=shape_label, command=lambda: self.toggle_node_shape(node_id))
 
@@ -1529,6 +1677,7 @@ class MindMapCanvas(tk.Frame):
         return node
 
     def clear_all(self) -> None:
+        self._hide_note_tooltip()
         self.canvas.delete("all")
         self.nodes.clear()
         self.connections.clear()
