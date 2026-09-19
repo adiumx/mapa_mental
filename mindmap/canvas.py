@@ -181,6 +181,7 @@ class MindMapCanvas(tk.Frame):
 
         self.selected: Optional[Tuple[str, int]] = None
         self.selected_nodes: set = set()
+        self._hidden_nodes: set = set()
         self._marquee_rect = None
         self._drag = {"mode": None, "node_id": None, "last_x": 0, "last_y": 0}
         self._connect_temp_line = None
@@ -335,6 +336,7 @@ class MindMapCanvas(tk.Frame):
         for node in list(self.nodes.values()):
             self._redraw_node(node)
         self._redraw_all_connections()
+        self._apply_visibility()
 
     def _redraw_all_connections(self) -> None:
         for conn in self.connections.values():
@@ -484,6 +486,132 @@ class MindMapCanvas(tk.Frame):
             self._draw_node_dot(node)
         else:
             self._draw_node_box(node, theme)
+        self._draw_collapse_badge(node)
+
+    # ------------------------------------------------------------------ #
+    # Jerarquía: colapsar / expandir ramas
+    # ------------------------------------------------------------------ #
+    def _children_of(self, node_id: int) -> list:
+        """Hijos directos: los destinos de las conexiones que salen del nodo."""
+        return [c.target_id for c in self.connections.values()
+                if c.source_id == node_id and c.target_id in self.nodes]
+
+    def _descendants_of(self, node_id: int) -> set:
+        """Todo el subárbol por debajo del nodo (sin incluirlo)."""
+        seen = set()
+        pending = list(self._children_of(node_id))
+        while pending:
+            current = pending.pop()
+            if current == node_id or current in seen:
+                continue
+            seen.add(current)
+            pending.extend(self._children_of(current))
+        return seen
+
+    def _hidden_node_ids(self) -> set:
+        hidden = set()
+        for node_id, node in self.nodes.items():
+            if node.collapsed:
+                hidden |= self._descendants_of(node_id)
+        return hidden
+
+    def _apply_visibility(self) -> None:
+        """Oculta o muestra nodos y conexiones según qué ramas estén colapsadas.
+        Los items ocultos de Tk no se dibujan, no se pueden clicar ni salen al
+        exportar la imagen, así que basta con cambiarles el estado."""
+        hidden = self._hidden_node_ids()
+        self._hidden_nodes = hidden
+
+        stale = self.selected_nodes & hidden
+        for node_id in stale:
+            if node_id in self.node_items:
+                self._apply_node_selection_style(node_id, False)
+        if stale:
+            self.selected_nodes -= stale
+            self._sync_single_selection()
+
+        for node_id in self.nodes:
+            self.canvas.itemconfigure(
+                f"nid_{node_id}", state="hidden" if node_id in hidden else "normal")
+        for conn in self.connections.values():
+            item = self.conn_items.get(conn.id)
+            if item is None:
+                continue
+            conn_hidden = conn.source_id in hidden or conn.target_id in hidden
+            self.canvas.itemconfigure(item, state="hidden" if conn_hidden else "normal")
+
+    def _draw_collapse_badge(self, node: Node) -> None:
+        """Círculo pequeño en el borde del nodo para colapsar/expandir su rama:
+        un "–" cuando está expandida, y la cantidad de nodos ocultos cuando no."""
+        children = self._children_of(node.id)
+        if not children:
+            return
+
+        on_right = sum(1 for c in children if self.nodes[c].x >= node.x)
+        side = 1 if on_right * 2 >= len(children) else -1
+        ax, ay = self._node_anchor(node, side)
+        radius = max(7.0, 9 * self._zoom)
+        cx = ax + side * radius
+        tags = ("node", f"nid_{node.id}", f"badge_{node.id}")
+
+        self.canvas.create_oval(
+            cx - radius, ay - radius, cx + radius, ay + radius,
+            fill="#ffffff", outline=node.color, width=max(1, round(2 * self._zoom)),
+            tags=tags,
+        )
+        if node.collapsed:
+            self.canvas.create_text(
+                cx, ay, text=str(len(self._descendants_of(node.id))), fill=node.color,
+                font=self._font(scale=self._zoom * 0.85), tags=tags,
+            )
+        else:
+            self.canvas.create_line(
+                cx - radius * 0.45, ay, cx + radius * 0.45, ay,
+                fill=node.color, width=max(1, round(2 * self._zoom)), tags=tags,
+            )
+
+    def _move_group_for(self, node_ids: set) -> set:
+        """Al arrastrar un nodo colapsado, su rama oculta tiene que viajar con él
+        para que siga en su sitio cuando se vuelva a expandir."""
+        group = set(node_ids)
+        for node_id in node_ids:
+            if self.nodes[node_id].collapsed:
+                group |= self._descendants_of(node_id)
+        return group
+
+    def toggle_collapse(self, node_id: int) -> None:
+        node = self.nodes[node_id]
+        if not self._children_of(node_id):
+            return
+        self._snapshot_undo()
+        node.collapsed = not node.collapsed
+        self._redraw_node(node)
+        self._apply_visibility()
+        if node.collapsed:
+            self._set_status(
+                f'Rama "{node.text}" colapsada: {len(self._descendants_of(node_id))} nodos ocultos.')
+        else:
+            self._set_status(f'Rama "{node.text}" expandida.')
+
+    def collapse_all(self) -> None:
+        targets = [n for n in self.nodes.values() if self._children_of(n.id) and not n.collapsed]
+        if not targets:
+            return
+        self._snapshot_undo()
+        for node in targets:
+            node.collapsed = True
+        self._redraw_all()
+        self._set_status("Todas las ramas colapsadas.")
+
+    def expand_all(self) -> None:
+        targets = [n for n in self.nodes.values() if n.collapsed]
+        if not targets:
+            return
+        self._snapshot_undo()
+        for node in targets:
+            node.collapsed = False
+        self._redraw_all()
+        self._set_status("Todas las ramas expandidas.")
 
     def _draw_node_custom(self, node: Node, theme: dict) -> None:
         base_font = self._font(node)
@@ -667,6 +795,8 @@ class MindMapCanvas(tk.Frame):
         self._draw_node(node)
         if was_selected:
             self._apply_node_selection_style(node.id, True)
+        if node.id in self._hidden_nodes:
+            self.canvas.itemconfigure(f"nid_{node.id}", state="hidden")
         self._update_connections_for_node(node.id)
 
     def _apply_node_selection_style(self, node_id: int, selected: bool) -> None:
@@ -739,6 +869,7 @@ class MindMapCanvas(tk.Frame):
 
         self.selected_nodes.discard(node_id)
         self._sync_single_selection()
+        self._apply_visibility()
 
     # ------------------------------------------------------------------ #
     # Creación / dibujo de conexiones
@@ -761,6 +892,9 @@ class MindMapCanvas(tk.Frame):
         if THEMES[self.theme]["node"] == "dot":
             # el lado del texto del destino puede depender de dónde quedó el origen
             self._redraw_node(self.nodes[target_id])
+        # el origen pasa a tener hijos: hay que dibujarle el botón de colapsar
+        self._redraw_node(self.nodes[source_id])
+        self._apply_visibility()
         self.select_connection(conn.id)
         return conn
 
@@ -820,10 +954,15 @@ class MindMapCanvas(tk.Frame):
         if conn_id not in self.connections:
             return
         self._snapshot_undo()
+        source_id = self.connections[conn_id].source_id
         self.canvas.delete(self.conn_items.pop(conn_id))
         del self.connections[conn_id]
         if self.selected == ("conn", conn_id):
             self.selected = None
+        if source_id in self.nodes:
+            # puede haberse quedado sin hijos: hay que quitarle el botón de colapsar
+            self._redraw_node(self.nodes[source_id])
+        self._apply_visibility()
 
     # ------------------------------------------------------------------ #
     # Selección visual
@@ -948,6 +1087,13 @@ class MindMapCanvas(tk.Frame):
                     return int(tag.split("_", 1)[1])
         return None
 
+    def _badge_node_id_at(self, x: float, y: float) -> Optional[int]:
+        for item in self.canvas.find_overlapping(x - 2, y - 2, x + 2, y + 2):
+            for tag in self.canvas.gettags(item):
+                if tag.startswith("badge_"):
+                    return int(tag.split("_", 1)[1])
+        return None
+
     def _conn_id_at(self, x: float, y: float) -> Optional[int]:
         for item in self.canvas.find_overlapping(x - 4, y - 4, x + 4, y + 4):
             tags = self.canvas.gettags(item)
@@ -975,6 +1121,12 @@ class MindMapCanvas(tk.Frame):
             self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
             return
 
+        badge_node_id = self._badge_node_id_at(event.x, event.y)
+        if badge_node_id is not None:
+            self.toggle_collapse(badge_node_id)
+            self._drag = {"mode": None, "node_id": None, "last_x": event.x, "last_y": event.y}
+            return
+
         shift_held = bool(event.state & 0x0001)
         ctrl_held = bool(event.state & 0x0004)
 
@@ -998,12 +1150,14 @@ class MindMapCanvas(tk.Frame):
             if node_id in self.selected_nodes and len(self.selected_nodes) > 1:
                 # El nodo ya forma parte de una selección múltiple: arrastrar todo el grupo.
                 self._snapshot_undo()
-                self._drag = {"mode": "move", "node_id": node_id, "group": set(self.selected_nodes),
+                self._drag = {"mode": "move", "node_id": node_id,
+                               "group": self._move_group_for(self.selected_nodes),
                                "last_x": event.x, "last_y": event.y}
                 return
             self.select_node(node_id)
             self._snapshot_undo()
-            self._drag = {"mode": "move", "node_id": node_id, "group": None,
+            self._drag = {"mode": "move", "node_id": node_id,
+                           "group": self._move_group_for({node_id}),
                            "last_x": event.x, "last_y": event.y}
             return
 
@@ -1086,6 +1240,8 @@ class MindMapCanvas(tk.Frame):
             if rx1 - rx0 > 3 or ry1 - ry0 > 3:
                 matched = set()
                 for node_id, node in self.nodes.items():
+                    if node_id in self._hidden_nodes:
+                        continue
                     sx, sy = self._to_screen(node.x, node.y)
                     hw, hh = (node.width / 2) * self._zoom, (node.height / 2) * self._zoom
                     if sx + hw >= rx0 and sx - hw <= rx1 and sy + hh >= ry0 and sy - hh <= ry1:
@@ -1131,6 +1287,12 @@ class MindMapCanvas(tk.Frame):
         shape_label = "Convertir en nodo de rama" if node.shape == "root" else "Convertir en nodo central"
         menu.add_command(label=shape_label, command=lambda: self.toggle_node_shape(node_id))
 
+        hidden_count = len(self._descendants_of(node_id))
+        if hidden_count:
+            collapse_label = ("Expandir rama" if node.collapsed
+                               else f"Colapsar rama ({hidden_count} nodos)")
+            menu.add_command(label=collapse_label, command=lambda: self.toggle_collapse(node_id))
+
         shape_menu = tk.Menu(menu, tearoff=0)
         shape_menu.add_command(label="Normal (según el tema)",
                                 command=lambda: self.clear_node_shape(node_id))
@@ -1172,6 +1334,9 @@ class MindMapCanvas(tk.Frame):
         menu = tk.Menu(self, tearoff=0)
         mx, my = self._to_model(event.x, event.y)
         menu.add_command(label="Nuevo nodo aquí", command=lambda: self.new_node(x=mx, y=my))
+        menu.add_separator()
+        menu.add_command(label="Expandir todo", command=self.expand_all)
+        menu.add_command(label="Colapsar todo", command=self.collapse_all)
         menu.tk_popup(event.x_root, event.y_root)
 
     # ------------------------------------------------------------------ #
@@ -1343,6 +1508,10 @@ class MindMapCanvas(tk.Frame):
                 max_conn_id = max(max_conn_id, conn.id)
         self._node_id_seq = itertools.count(max_node_id + 1)
         self._conn_id_seq = itertools.count(max_conn_id + 1)
+        # los nodos se dibujaron antes de existir las conexiones: hay que
+        # redibujarlos para que aparezcan los botones de colapsar y se aplique
+        # el estado colapsado que venía guardado
+        self._redraw_all()
 
     def reset_to_default(self, text: str = "Idea central", color: Optional[str] = None) -> Node:
         self._snapshot_undo()
@@ -1367,6 +1536,7 @@ class MindMapCanvas(tk.Frame):
         self.conn_items.clear()
         self.selected = None
         self.selected_nodes = set()
+        self._hidden_nodes = set()
         self._node_id_seq = itertools.count(1)
         self._conn_id_seq = itertools.count(1)
         self._zoom = 1.0

@@ -18,6 +18,7 @@ class Node:
     # normalizados (centrados en 0, mayor dimensión = 1.0). None = forma
     # normal del tema (caja/punto/nube).
     custom_shape: Optional[List[List[float]]] = None
+    collapsed: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -30,6 +31,7 @@ class Node:
             "width": self.width,
             "height": self.height,
             "custom_shape": self.custom_shape,
+            "collapsed": self.collapsed,
         }
 
     @classmethod
@@ -44,6 +46,7 @@ class Node:
             width=data.get("width", 140),
             height=data.get("height", 56),
             custom_shape=data.get("custom_shape"),
+            collapsed=data.get("collapsed", False),
         )
 
 

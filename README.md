@@ -38,6 +38,13 @@ python3 main.py
     el grupo junto, **Supr/Backspace** los elimina a todos, y el botón
     "Color de nodo" (o "Cambiar color..." del clic derecho) los recolorea a
     todos a la vez. Cada una de estas acciones es un solo paso de deshacer.
+- **Colapsar / expandir ramas**: los nodos que tienen hijos muestran un círculo
+  pequeño en su borde. Haz clic en él para ocultar o volver a mostrar toda su
+  rama; cuando está colapsada, el círculo indica cuántos nodos quedaron
+  ocultos. También está disponible desde el clic derecho sobre el nodo, y con
+  **Expandir todo / Colapsar todo** en el clic derecho sobre el lienzo. Las
+  ramas ocultas se guardan con el mapa y no aparecen al exportar la imagen; al
+  mover un nodo colapsado, su rama oculta se mueve con él.
 - **Rueda del mouse**: acercar o alejar (zoom), centrado en la posición del cursor.
 - **Mantener Espacio y arrastrar**: desplazarse por el lienzo (paneo) sin mover nodos.
 - **Botón "Conectar nodos"** (barra de herramientas): actívalo, haz clic en el nodo
