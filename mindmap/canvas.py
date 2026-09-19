@@ -7,10 +7,11 @@ import os
 import shutil
 import subprocess
 import tkinter as tk
-from tkinter import colorchooser, simpledialog
+from tkinter import colorchooser, filedialog, messagebox, simpledialog
 from typing import Callable, Dict, Optional, Tuple
 
 from .models import Connection, Node
+from .svg_import import import_svg_shape
 from .text_import import OutlineNode, parse_outline
 
 PALETTES = {
@@ -93,6 +94,29 @@ def _split_by_weight(children):
             left.append(child)
             left_w += w
     return right, left
+
+
+def _polygon_horizontal_extent(points, sign: int) -> float:
+    """Distancia desde x=0 hasta el borde de un polígono normalizado
+    (lista de (x, y) centrada en el origen), del lado que indica `sign`
+    (+1 derecha, -1 izquierda), medida donde el contorno cruza y=0."""
+    best = 0.0
+    n = len(points)
+    for i in range(n):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % n]
+        if y1 == y2:
+            continue
+        if (y1 <= 0 <= y2) or (y2 <= 0 <= y1):
+            t = (0 - y1) / (y2 - y1)
+            x = x1 + t * (x2 - x1)
+            if (sign > 0 and x > 0) or (sign < 0 and x < 0):
+                best = max(best, abs(x))
+    if best <= 0:
+        for x, y in points:
+            if (sign > 0 and x > 0) or (sign < 0 and x < 0):
+                best = max(best, abs(x))
+    return best if best > 0 else 0.5
 
 
 def _rounded_rect_points(x1, y1, x2, y2, radius):
@@ -449,12 +473,58 @@ class MindMapCanvas(tk.Frame):
 
     def _draw_node(self, node: Node) -> None:
         theme = THEMES[self.theme]
-        if node.shape == "root" and theme.get("root") == "cloud":
+        if node.custom_shape:
+            self._draw_node_custom(node, theme)
+        elif node.shape == "root" and theme.get("root") == "cloud":
             self._draw_node_cloud(node)
         elif theme["node"] == "dot" and node.shape != "root":
             self._draw_node_dot(node)
         else:
             self._draw_node_box(node, theme)
+
+    def _draw_node_custom(self, node: Node, theme: dict) -> None:
+        base_font = self._font(node)
+        lines = node.text.split("\n") or [""]
+        text_w = max(base_font.measure(line) for line in lines)
+        is_root = node.shape == "root"
+        text_h = (26 if is_root else 20) * len(lines)
+        pad_x, pad_y = (34, 20) if is_root else (16, 10)
+        min_w, min_h = (140, 60) if is_root else (60, 44)
+        tag = f"nid_{node.id}"
+
+        node.width = max(min_w, text_w + 2 * pad_x)
+        node.height = max(min_h, text_h + 2 * pad_y)
+
+        zoom = self._zoom
+        sx, sy = self._to_screen(node.x, node.y)
+        sw, sh = node.width * zoom, node.height * zoom
+
+        outline_mode = theme["fill"] == "outline"
+        fill_color = "#ffffff" if outline_mode else node.color
+        outline_color = node.color if outline_mode else "#2b2b2b"
+        outline_width = max(2, round((3 if outline_mode else 1.5) * zoom))
+        text_color = node.color if outline_mode else "#ffffff"
+
+        poly = []
+        for nx, ny in node.custom_shape:
+            poly.extend([sx + nx * sw, sy + ny * sh])
+
+        shape_item = self.canvas.create_polygon(
+            poly, fill=fill_color, outline=outline_color, width=outline_width,
+            smooth=False, tags=("node", tag),
+        )
+        render_font = self._font(node, scale=zoom)
+        text_item = self.canvas.create_text(
+            sx, sy, text=node.text, fill=text_color,
+            font=render_font, tags=("node", "node-text", tag),
+            width=max(1, sw - 2 * pad_x * zoom), justify="center",
+        )
+        self.node_items[node.id] = {
+            "shape": shape_item, "text": text_item,
+            "outline": (outline_color, outline_width),
+        }
+        self.canvas.tag_bind(tag, "<Enter>", lambda e: self.canvas.config(cursor="fleur"))
+        self.canvas.tag_bind(tag, "<Leave>", lambda e: self.canvas.config(cursor=""))
 
     def _draw_node_cloud(self, node: Node) -> None:
         base_font = self._font(node)
@@ -615,6 +685,28 @@ class MindMapCanvas(tk.Frame):
         node.shape = "leaf" if node.shape == "root" else "root"
         self._redraw_node(node)
 
+    def import_node_shape(self, node_id: int) -> None:
+        path = filedialog.askopenfilename(
+            title="Importar forma SVG", filetypes=[("Imagen SVG", "*.svg")], parent=self,
+        )
+        if not path:
+            return
+        try:
+            points = import_svg_shape(path)
+        except ValueError as e:
+            messagebox.showerror("No se pudo importar la forma", str(e), parent=self)
+            return
+        node = self.nodes[node_id]
+        self._snapshot_undo()
+        node.custom_shape = [list(p) for p in points]
+        self._redraw_node(node)
+
+    def clear_node_shape(self, node_id: int) -> None:
+        node = self.nodes[node_id]
+        self._snapshot_undo()
+        node.custom_shape = None
+        self._redraw_node(node)
+
     def delete_node(self, node_id: int) -> None:
         if node_id not in self.nodes:
             return
@@ -665,7 +757,9 @@ class MindMapCanvas(tk.Frame):
         borde en vez de atravesar el centro."""
         theme = THEMES[self.theme]
         sx, sy = self._to_screen(node.x, node.y)
-        if theme["node"] == "dot" and node.shape != "root":
+        if node.custom_shape:
+            half = _polygon_horizontal_extent(node.custom_shape, dx_sign) * node.width * self._zoom
+        elif theme["node"] == "dot" and node.shape != "root":
             text_side_sign = 1 if self._dot_text_side(node) == "right" else -1
             if dx_sign == text_side_sign:
                 # el texto queda de este mismo lado: hay que pasar de largo,
@@ -903,6 +997,10 @@ class MindMapCanvas(tk.Frame):
                           command=lambda: self.change_node_color(node_id))
         shape_label = "Convertir en nodo de rama" if node.shape == "root" else "Convertir en nodo central"
         menu.add_command(label=shape_label, command=lambda: self.toggle_node_shape(node_id))
+        menu.add_command(label="Importar forma (SVG)...", command=lambda: self.import_node_shape(node_id))
+        if node.custom_shape:
+            menu.add_command(label="Quitar forma personalizada",
+                              command=lambda: self.clear_node_shape(node_id))
         menu.add_separator()
         menu.add_command(label="Eliminar nodo", command=lambda: self.delete_node(node_id))
         menu.tk_popup(event.x_root, event.y_root)

@@ -35,7 +35,8 @@ python3 main.py
   **Shift y arrastrar** de un nodo a otro, si lo prefieres.
 - **Clic sobre una conexión**: la selecciona (se resalta con un borde de color).
 - **Clic derecho** sobre un nodo o conexión: abre un menú con más opciones
-  (cambiar color, cambiar grosor, convertir en nodo central/de rama, eliminar).
+  (cambiar color, cambiar grosor, convertir en nodo central/de rama,
+  importar forma SVG, eliminar).
 - **Barra de herramientas**: botones para agregar nodo, conectar, renombrar, cambiar
   color de nodo/conexión, eliminar, elegir paleta, guardar y abrir.
 - **Tecla Supr/Backspace**: elimina el nodo o la conexión seleccionada.
@@ -72,6 +73,12 @@ python3 main.py
 - **Nueva paleta...**: crea tu propia paleta eligiendo 6 colores de rama y un
   color para el nodo central; queda disponible en el selector de paletas
   junto con las demás (se guarda solo durante la sesión actual).
+- **Importar forma (SVG)** (clic derecho sobre un nodo): usa la silueta de un
+  archivo `.svg` propio como forma de ese nodo, en vez de la caja/punto/nube
+  del tema. Admite SVG simples: `<path>` (con líneas y curvas), `<polygon>`,
+  `<polyline>`, `<rect>`, `<circle>` y `<ellipse>` (se usa la primera forma
+  que aparezca en el archivo). La forma se guarda con el mapa y se puede
+  quitar con "Quitar forma personalizada" para volver a la del tema.
 - **Deshacer / rehacer** (`Ctrl+Z` / `Ctrl+Y`, o menú *Editar*): revierte
   cualquier acción (crear, mover, renombrar, cambiar colores, eliminar,
   generar mapa desde texto, nuevo mapa, abrir archivo).
@@ -90,4 +97,5 @@ mindmap/
   app.py             # ventana principal, menú, barra de herramientas
   canvas.py          # lienzo interactivo: nodos, conexiones, arrastre, colores
   models.py          # modelos de datos (Node, Connection) y su serialización
+  svg_import.py      # parseo de SVG simples para formas de nodo personalizadas
 ```

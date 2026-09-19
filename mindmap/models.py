@@ -1,7 +1,7 @@
 """Modelos de datos para nodos y conexiones del mapa mental."""
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -14,6 +14,10 @@ class Node:
     shape: str = "leaf"  # "root" (nodo central, más grande) o "leaf" (nodo de rama)
     width: float = 140
     height: float = 56
+    # Contorno personalizado importado de un SVG: lista de puntos (x, y)
+    # normalizados (centrados en 0, mayor dimensión = 1.0). None = forma
+    # normal del tema (caja/punto/nube).
+    custom_shape: Optional[List[List[float]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -25,6 +29,7 @@ class Node:
             "shape": self.shape,
             "width": self.width,
             "height": self.height,
+            "custom_shape": self.custom_shape,
         }
 
     @classmethod
@@ -38,6 +43,7 @@ class Node:
             shape=data.get("shape", "leaf"),
             width=data.get("width", 140),
             height=data.get("height", 56),
+            custom_shape=data.get("custom_shape"),
         )
 
 
