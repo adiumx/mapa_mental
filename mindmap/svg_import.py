@@ -9,7 +9,7 @@ igual a 1.0, listos para escalarse al tamaño de un nodo.
 
 import re
 import xml.etree.ElementTree as ET
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 _SVG_NS = "{http://www.w3.org/2000/svg}"
 _SHAPE_TAGS = ("path", "polygon", "polyline", "rect", "circle", "ellipse")
@@ -220,6 +220,19 @@ def _normalize(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     return [((x - cx) * scale, (y - cy) * scale) for x, y in points]
 
 
+def _points_from_root(root: ET.Element) -> List[Tuple[float, float]]:
+    el = _find_shape_element(root)
+    if el is None:
+        raise ValueError(
+            "No se encontró ninguna forma soportada en el SVG "
+            "(se admiten <path>, <polygon>, <polyline>, <rect>, <circle>, <ellipse>)."
+        )
+    points = _shape_element_to_points(el)
+    if len(points) < 3:
+        raise ValueError("La forma tiene muy pocos puntos para formar un polígono.")
+    return _normalize(points)
+
+
 def import_svg_shape(path: str) -> List[Tuple[float, float]]:
     """Lee un archivo .svg y devuelve los puntos de su primera forma, como una
     lista de (x, y) normalizados (centrados en el origen, mayor dimensión = 1.0).
@@ -233,16 +246,73 @@ def import_svg_shape(path: str) -> List[Tuple[float, float]]:
         raise ValueError(f"El archivo no es un SVG válido: {e}") from e
     except OSError as e:
         raise ValueError(f"No se pudo leer el archivo: {e}") from e
+    return _points_from_root(tree.getroot())
 
-    root = tree.getroot()
-    el = _find_shape_element(root)
-    if el is None:
-        raise ValueError(
-            "No se encontró ninguna forma soportada en el SVG "
-            "(se admiten <path>, <polygon>, <polyline>, <rect>, <circle>, <ellipse>)."
-        )
 
-    points = _shape_element_to_points(el)
-    if len(points) < 3:
-        raise ValueError("La forma tiene muy pocos puntos para formar un polígono.")
-    return _normalize(points)
+def import_svg_shape_from_text(svg_text: str) -> List[Tuple[float, float]]:
+    """Igual que import_svg_shape, pero a partir del contenido SVG como texto
+    (usado para las formas predefinidas incluidas en la aplicación)."""
+    try:
+        root = ET.fromstring(svg_text)
+    except ET.ParseError as e:
+        raise ValueError(f"El SVG no es válido: {e}") from e
+    return _points_from_root(root)
+
+
+# Galería de formas predefinidas: nombre visible -> marcado SVG. Se guardan
+# como SVG (en vez de listas de puntos ya calculadas) para reusar el mismo
+# parser que la importación de archivos y no duplicar lógica.
+BUILTIN_SHAPES: Dict[str, str] = {
+    "Estrella": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><polygon points='
+        '"50,5 61,38 96,38 68,59 79,92 50,71 21,92 32,59 4,38 39,38"/></svg>'
+    ),
+    "Corazón": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><path d="'
+        "M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4"
+        "c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z"
+        '"/></svg>'
+    ),
+    "Hexágono": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><polygon points='
+        '"50,0 100,25 100,75 50,100 0,75 0,25"/></svg>'
+    ),
+    "Diamante": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><polygon points='
+        '"50,0 100,50 50,100 0,50"/></svg>'
+    ),
+    "Nube": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><polygon points="'
+        "202.6,70.0 212.3,84.2 192.4,94.7 170.4,101.2 164.0,114.6 150.0,127.7 "
+        "122.8,125.6 100.0,120.0 77.2,125.6 50.0,127.7 36.0,114.6 29.6,101.2 "
+        "7.6,94.7 -12.3,84.2 -2.6,70.0 12.3,58.9 7.6,45.3 9.9,30.1 36.0,25.4 "
+        "61.0,25.0 77.2,14.4 100.0,6.0 122.8,14.4 139.0,25.0 164.0,25.4 "
+        '190.1,30.1 192.4,45.3 187.7,58.9"/></svg>'
+    ),
+    "Rayo": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><polygon points='
+        '"55,0 15,60 45,60 30,100 90,35 55,35"/></svg>'
+    ),
+    "Flecha": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><polygon points='
+        '"0,35 60,35 60,15 100,50 60,85 60,65 0,65"/></svg>'
+    ),
+    "Escudo": (
+        '<svg xmlns="http://www.w3.org/2000/svg"><polygon points='
+        '"50,0 90,15 90,55 50,100 10,55 10,15"/></svg>'
+    ),
+}
+
+_builtin_shape_cache: Dict[str, List[Tuple[float, float]]] = {}
+
+
+def list_builtin_shape_names() -> List[str]:
+    return list(BUILTIN_SHAPES.keys())
+
+
+def get_builtin_shape_points(name: str) -> List[Tuple[float, float]]:
+    if name not in BUILTIN_SHAPES:
+        raise ValueError(f"Forma predefinida desconocida: {name}")
+    if name not in _builtin_shape_cache:
+        _builtin_shape_cache[name] = import_svg_shape_from_text(BUILTIN_SHAPES[name])
+    return _builtin_shape_cache[name]

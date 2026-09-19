@@ -73,12 +73,17 @@ python3 main.py
 - **Nueva paleta...**: crea tu propia paleta eligiendo 6 colores de rama y un
   color para el nodo central; queda disponible en el selector de paletas
   junto con las demás (se guarda solo durante la sesión actual).
-- **Importar forma (SVG)** (clic derecho sobre un nodo): usa la silueta de un
-  archivo `.svg` propio como forma de ese nodo, en vez de la caja/punto/nube
-  del tema. Admite SVG simples: `<path>` (con líneas y curvas), `<polygon>`,
-  `<polyline>`, `<rect>`, `<circle>` y `<ellipse>` (se usa la primera forma
-  que aparezca en el archivo). La forma se guarda con el mapa y se puede
-  quitar con "Quitar forma personalizada" para volver a la del tema.
+- **Forma del nodo** (clic derecho sobre un nodo): cambia la silueta de ese
+  nodo, en vez de la caja/punto/nube del tema.
+  - Incluye una galería de formas predefinidas: Estrella, Corazón, Hexágono,
+    Diamante, Nube, Rayo, Flecha y Escudo.
+  - **Importar desde archivo SVG...**: usa la silueta de un archivo `.svg`
+    propio. Admite SVG simples: `<path>` (con líneas y curvas), `<polygon>`,
+    `<polyline>`, `<rect>`, `<circle>` y `<ellipse>` (se usa la primera forma
+    que aparezca en el archivo).
+  - **Normal (según el tema)**: quita la forma personalizada y vuelve a la
+    del tema activo.
+  - La forma elegida se guarda con el mapa.
 - **Deshacer / rehacer** (`Ctrl+Z` / `Ctrl+Y`, o menú *Editar*): revierte
   cualquier acción (crear, mover, renombrar, cambiar colores, eliminar,
   generar mapa desde texto, nuevo mapa, abrir archivo).

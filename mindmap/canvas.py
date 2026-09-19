@@ -11,7 +11,7 @@ from tkinter import colorchooser, filedialog, messagebox, simpledialog
 from typing import Callable, Dict, Optional, Tuple
 
 from .models import Connection, Node
-from .svg_import import import_svg_shape
+from .svg_import import get_builtin_shape_points, import_svg_shape, list_builtin_shape_names
 from .text_import import OutlineNode, parse_outline
 
 PALETTES = {
@@ -701,6 +701,17 @@ class MindMapCanvas(tk.Frame):
         node.custom_shape = [list(p) for p in points]
         self._redraw_node(node)
 
+    def apply_builtin_node_shape(self, node_id: int, shape_name: str) -> None:
+        try:
+            points = get_builtin_shape_points(shape_name)
+        except ValueError as e:
+            messagebox.showerror("No se pudo aplicar la forma", str(e), parent=self)
+            return
+        node = self.nodes[node_id]
+        self._snapshot_undo()
+        node.custom_shape = [list(p) for p in points]
+        self._redraw_node(node)
+
     def clear_node_shape(self, node_id: int) -> None:
         node = self.nodes[node_id]
         self._snapshot_undo()
@@ -997,10 +1008,21 @@ class MindMapCanvas(tk.Frame):
                           command=lambda: self.change_node_color(node_id))
         shape_label = "Convertir en nodo de rama" if node.shape == "root" else "Convertir en nodo central"
         menu.add_command(label=shape_label, command=lambda: self.toggle_node_shape(node_id))
-        menu.add_command(label="Importar forma (SVG)...", command=lambda: self.import_node_shape(node_id))
-        if node.custom_shape:
-            menu.add_command(label="Quitar forma personalizada",
-                              command=lambda: self.clear_node_shape(node_id))
+
+        shape_menu = tk.Menu(menu, tearoff=0)
+        shape_menu.add_command(label="Normal (según el tema)",
+                                command=lambda: self.clear_node_shape(node_id))
+        shape_menu.add_separator()
+        for shape_name in list_builtin_shape_names():
+            shape_menu.add_command(
+                label=shape_name,
+                command=lambda name=shape_name: self.apply_builtin_node_shape(node_id, name),
+            )
+        shape_menu.add_separator()
+        shape_menu.add_command(label="Importar desde archivo SVG...",
+                                command=lambda: self.import_node_shape(node_id))
+        menu.add_cascade(label="Forma del nodo", menu=shape_menu)
+
         menu.add_separator()
         menu.add_command(label="Eliminar nodo", command=lambda: self.delete_node(node_id))
         menu.tk_popup(event.x_root, event.y_root)
