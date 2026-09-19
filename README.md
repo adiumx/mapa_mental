@@ -27,6 +27,16 @@ python3 main.py
 
 - **Doble clic en un espacio vacío**: crea un nodo nuevo.
 - **Doble clic sobre un nodo**: renombrarlo.
+- **Tab / Enter** (con un nodo seleccionado): la forma rápida de escribir un mapa
+  sin soltar el teclado. **Tab** agrega un nodo *hijo* y **Enter** un *hermano*,
+  ya conectado, ubicado y con el color de su rama; escribís el texto y seguís.
+  Los hijos del nodo central se reparten solos entre la izquierda y la derecha.
+- **Reorganizar mapa** (botón *Reorganizar*, menú *Ver*, o `Ctrl+R`): reacomoda
+  todo con el mismo layout bilateral que usa *Texto → Mapa*, útil cuando armaste
+  el mapa a mano o le fuiste agregando nodos y quedó desprolijo.
+- **Ajustar a la pantalla** (botón *Ajustar*, menú *Ver*, o `Ctrl+0`): calcula el
+  zoom y el desplazamiento para que entre todo el mapa visible. Ignora las ramas
+  que tengas colapsadas.
 - **Arrastrar un nodo**: moverlo por el lienzo.
 - **Selección múltiple de nodos**:
   - **Ctrl + clic** sobre un nodo: lo agrega o lo quita de la selección, sin

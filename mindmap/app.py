@@ -61,6 +61,11 @@ class MindMapApp(tk.Tk):
         menubar.add_cascade(label="Editar", menu=edit_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
+        view_menu.add_command(label="Ajustar a la pantalla", command=self._zoom_to_fit,
+                               accelerator="Ctrl+0")
+        view_menu.add_command(label="Reorganizar mapa", command=self._relayout_map,
+                               accelerator="Ctrl+R")
+        view_menu.add_separator()
         view_menu.add_checkbutton(label="Panel de notas", variable=self.notes_panel_var,
                                    command=self._toggle_notes_panel)
         menubar.add_cascade(label="Ver", menu=view_menu)
@@ -77,6 +82,8 @@ class MindMapApp(tk.Tk):
         self.bind_all("<Control-z>", lambda e: self._undo())
         self.bind_all("<Control-y>", lambda e: self._redo())
         self.bind_all("<Control-Shift-Z>", lambda e: self._redo())
+        self.bind_all("<Control-0>", lambda e: self._zoom_to_fit())
+        self.bind_all("<Control-r>", lambda e: self._relayout_map())
 
     def _build_toolbar(self):
         row1 = ttk.Frame(self, padding=(6, 6, 6, 3))
@@ -124,7 +131,16 @@ class MindMapApp(tk.Tk):
         ttk.Button(row2, text="Texto → Mapa", command=self._import_text_dialog).pack(side=tk.LEFT, padx=3)
         ttk.Button(row2, text="Exportar imagen", command=self.export_image).pack(side=tk.LEFT, padx=3)
         ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(row2, text="Reorganizar", command=self._relayout_map).pack(side=tk.LEFT, padx=3)
+        ttk.Button(row2, text="Ajustar", command=self._zoom_to_fit).pack(side=tk.LEFT, padx=3)
         ttk.Button(row2, text="Notas", command=self._toggle_notes_panel).pack(side=tk.LEFT, padx=3)
+
+    def _relayout_map(self):
+        self.mind_canvas.relayout_map()
+
+    def _zoom_to_fit(self):
+        if not self.mind_canvas.zoom_to_fit():
+            messagebox.showinfo("Ajustar a la pantalla", "El mapa está vacío.")
 
     def _toggle_notes_panel(self):
         if self.notes_panel is not None:
@@ -155,6 +171,8 @@ class MindMapApp(tk.Tk):
             "Instrucciones",
             "• Doble clic en un espacio vacío: crear un nodo nuevo\n"
             "• Doble clic en un nodo: renombrarlo\n"
+            "• Tab: agregar un nodo hijo al seleccionado · Enter: agregar un hermano\n"
+            "• Ctrl+R: reorganizar el mapa · Ctrl+0: ajustar la vista a todo el mapa\n"
             "• Arrastrar un nodo: moverlo\n"
             "• Rueda del mouse: acercar / alejar (zoom), centrado en el cursor\n"
             "• Mantén Espacio y arrastra: desplazarte por el lienzo (paneo)\n"

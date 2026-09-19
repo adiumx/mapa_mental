@@ -80,13 +80,16 @@ def _count_leaves(outline_node) -> int:
     return sum(_count_leaves(c) for c in outline_node.children)
 
 
-def _split_by_weight(children):
-    """Reparte una lista de OutlineNode en dos lados (derecha, izquierda),
-    balanceando por cantidad de hojas y preservando el orden original en cada lado."""
+def _split_by_weight(children, weight_fn=_count_leaves):
+    """Reparte una lista de hijos en dos lados (derecha, izquierda), balanceando
+    por peso y preservando el orden original en cada lado.
+
+    `weight_fn` permite usarlo tanto con OutlineNode (al generar desde texto)
+    como con ids de nodos ya existentes (al reorganizar el mapa)."""
     right, left = [], []
     right_w = left_w = 0
     for child in children:
-        w = _count_leaves(child)
+        w = weight_fn(child)
         if right_w <= left_w:
             right.append(child)
             right_w += w
@@ -94,6 +97,17 @@ def _split_by_weight(children):
             left.append(child)
             left_w += w
     return right, left
+
+
+def _wrap_width(render_font, lines) -> int:
+    """Ancho de ajuste para el texto de un nodo, medido con la MISMA fuente con
+    la que se va a dibujar.
+
+    El tamaño de fuente se redondea al aplicar el zoom, así que un ancho
+    derivado de la fuente base se queda corto en zooms fraccionarios y parte
+    palabras al medio ("Backend" → "Backen/d"). Midiendo con la fuente real,
+    cada línea entra entera y solo se respetan los saltos explícitos."""
+    return max(1, max(render_font.measure(line) for line in lines) + 4)
 
 
 def _polygon_horizontal_extent(points, sign: int) -> float:
@@ -210,6 +224,8 @@ class MindMapCanvas(tk.Frame):
         self.canvas.bind("<Button-5>", self._on_mousewheel)
         self.canvas.bind("<KeyPress-space>", self._on_space_press)
         self.canvas.bind("<KeyRelease-space>", self._on_space_release)
+        self.canvas.bind("<Tab>", self._on_tab_key)
+        self.canvas.bind("<Return>", self._on_return_key)
         self.canvas.bind("<Motion>", self._on_canvas_hover)
         self.canvas.bind("<Leave>", lambda e: self._hide_note_tooltip())
         self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
@@ -834,7 +850,7 @@ class MindMapCanvas(tk.Frame):
         text_item = self.canvas.create_text(
             sx, sy, text=node.text, fill=text_color,
             font=render_font, tags=("node", "node-text", tag),
-            width=max(1, sw - 2 * pad_x * zoom), justify="center",
+            width=_wrap_width(render_font, lines), justify="center",
         )
         self.node_items[node.id] = {
             "shape": shape_item, "text": text_item,
@@ -911,7 +927,7 @@ class MindMapCanvas(tk.Frame):
         text_item = self.canvas.create_text(
             sx, sy, text=node.text, fill=text_color,
             font=render_font, tags=("node", "node-text", tag),
-            width=max(1, sw - 2 * pad_x * zoom), justify="center",
+            width=_wrap_width(render_font, lines), justify="center",
         )
         self.node_items[node.id] = {
             "shape": shape_item, "text": text_item,
@@ -1626,6 +1642,190 @@ class MindMapCanvas(tk.Frame):
         finally:
             self._suspend_undo = False
         self._set_status(f"Mapa generado con {len(self.nodes)} nodos a partir del texto.")
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Crear nodos con el teclado (Tab = hijo, Enter = hermano)
+    # ------------------------------------------------------------------ #
+    def _branch_direction(self, node: Node) -> int:
+        """Hacia qué lado crece la rama del nodo (+1 derecha, -1 izquierda)."""
+        incoming = self._incoming_connection(node.id)
+        if incoming is None:
+            return 1
+        parent = self.nodes.get(incoming.source_id)
+        if parent is None:
+            return 1
+        return 1 if node.x >= parent.x else -1
+
+    def add_child_node(self, parent_id: Optional[int] = None) -> Optional[Node]:
+        """Crea un nodo hijo del seleccionado, ya conectado, posicionado y con el
+        color de su rama. Pide el texto primero para no dejar nodos vacíos si se
+        cancela, y todo queda como un solo paso de deshacer."""
+        if parent_id is None:
+            parent_id = self.selected_node_id()
+        parent = self.nodes.get(parent_id) if parent_id is not None else None
+        if parent is None:
+            self._set_status("Selecciona un nodo primero (Tab agrega un hijo, Enter un hermano).")
+            return None
+
+        text = simpledialog.askstring("Nuevo nodo", f'Hijo de "{parent.text}":', parent=self)
+        if text is None or not text.strip():
+            return None
+        text = text.strip()
+
+        siblings = [self.nodes[c] for c in self._children_of(parent.id)]
+        is_root = self._incoming_connection(parent.id) is None
+        if is_root:
+            # Igual que el layout bilateral: manda el hijo al lado más liviano.
+            right = [s for s in siblings if s.x >= parent.x]
+            left = [s for s in siblings if s.x < parent.x]
+            direction = 1 if len(right) <= len(left) else -1
+            same_side = right if direction == 1 else left
+            color = next(self._color_cycle)
+        else:
+            direction = self._branch_direction(parent)
+            same_side = siblings
+            color = parent.color
+
+        child_width = self._leaf_box_width(text)
+        x = parent.x + direction * (parent.width / 2 + 60 + child_width / 2)
+        y = max(s.y for s in same_side) + 70 if same_side else parent.y
+
+        self._snapshot_undo()
+        previous_suspend = self._suspend_undo
+        self._suspend_undo = True
+        try:
+            child = self.new_node(x=x, y=y, text=text, color=color)
+            conn = self.new_connection(parent.id, child.id)
+            if conn is not None:
+                conn.color = color
+                self.canvas.itemconfig(self.conn_items[conn.id],
+                                        fill=self._connection_display_color(conn))
+            if parent.collapsed:
+                parent.collapsed = False
+                self._redraw_node(parent)
+            self._apply_visibility()
+            self.select_node(child.id)
+        finally:
+            self._suspend_undo = previous_suspend
+        self._set_status(f'Nodo "{text}" agregado. Tab: otro hijo · Enter: hermano.')
+        return child
+
+    def add_sibling_node(self, node_id: Optional[int] = None) -> Optional[Node]:
+        """Un hermano es, sencillamente, otro hijo del mismo padre."""
+        if node_id is None:
+            node_id = self.selected_node_id()
+        node = self.nodes.get(node_id) if node_id is not None else None
+        if node is None:
+            self._set_status("Selecciona un nodo primero (Enter agrega un hermano).")
+            return None
+        incoming = self._incoming_connection(node.id)
+        if incoming is None:
+            # El nodo central no tiene hermanos: se interpreta como agregarle un hijo.
+            return self.add_child_node(node.id)
+        return self.add_child_node(incoming.source_id)
+
+    def _on_tab_key(self, event):
+        self.add_child_node()
+        return "break"  # evita que Tab mueva el foco al siguiente widget
+
+    def _on_return_key(self, event):
+        self.add_sibling_node()
+        return "break"
+
+    # ------------------------------------------------------------------ #
+    # Reorganizar el mapa y ajustarlo a la pantalla
+    # ------------------------------------------------------------------ #
+    def _subtree_leaf_count(self, node_id: int, seen: Optional[set] = None) -> int:
+        if seen is None:
+            seen = set()
+        if node_id in seen:
+            return 1
+        seen.add(node_id)
+        children = [c for c in self._children_of(node_id) if c not in seen]
+        if not children:
+            return 1
+        return sum(self._subtree_leaf_count(c, seen) for c in children)
+
+    def _root_node_for_layout(self) -> Optional[Node]:
+        for node in self.nodes.values():
+            if node.shape == "root":
+                return node
+        for node in sorted(self.nodes.values(), key=lambda n: n.id):
+            if self._incoming_connection(node.id) is None:
+                return node
+        return None
+
+    def _relayout_subtree(self, parent: Node, child_ids: list, x_dir: int, top_y: float,
+                           placed: set, leaf_spacing: float, min_gap: float) -> None:
+        """Misma repartición que el layout de "Texto → Mapa", pero moviendo nodos
+        que ya existen en vez de crearlos."""
+        slot_start = top_y
+        for child_id in child_ids:
+            if child_id in placed:
+                continue
+            child = self.nodes[child_id]
+            leaves = self._subtree_leaf_count(child_id, set(placed))
+            slot_height = leaves * leaf_spacing
+            child.x = parent.x + x_dir * (parent.width / 2 + min_gap + child.width / 2)
+            child.y = slot_start + slot_height / 2
+            placed.add(child_id)
+            grandchildren = [c for c in self._children_of(child_id) if c not in placed]
+            self._relayout_subtree(child, grandchildren, x_dir, slot_start, placed,
+                                    leaf_spacing, min_gap)
+            slot_start += slot_height
+
+    def relayout_map(self, leaf_spacing: float = 60, min_gap: float = 60) -> bool:
+        """Reacomoda todo el mapa con el layout bilateral, como si se acabara de
+        generar desde texto. Los nodos sueltos (sin conexión al centro) se dejan
+        donde están."""
+        root = self._root_node_for_layout()
+        if root is None or not self._children_of(root.id):
+            self._set_status("No hay nada que reorganizar: el mapa no tiene ramas.")
+            return False
+
+        self._snapshot_undo()
+        cx, cy = self._canvas_center()
+        root.x, root.y = cx, cy
+        placed = {root.id}
+
+        children = self._children_of(root.id)
+        right, left = _split_by_weight(children, weight_fn=self._subtree_leaf_count)
+        right_height = sum(self._subtree_leaf_count(c) for c in right) * leaf_spacing
+        left_height = sum(self._subtree_leaf_count(c) for c in left) * leaf_spacing
+
+        self._relayout_subtree(root, right, +1, cy - right_height / 2, placed,
+                                leaf_spacing, min_gap)
+        self._relayout_subtree(root, left, -1, cy - left_height / 2, placed,
+                                leaf_spacing, min_gap)
+
+        self._redraw_all()
+        self._set_status(f"Mapa reorganizado ({len(placed)} nodos acomodados).")
+        return True
+
+    def zoom_to_fit(self, margin: float = 60) -> bool:
+        """Ajusta zoom y desplazamiento para que entre todo el mapa visible."""
+        visible = [n for n in self.nodes.values() if n.id not in self._hidden_nodes]
+        if not visible:
+            return False
+
+        min_x = min(n.x - n.width / 2 for n in visible)
+        max_x = max(n.x + n.width / 2 for n in visible)
+        min_y = min(n.y - n.height / 2 for n in visible)
+        max_y = max(n.y + n.height / 2 for n in visible)
+
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        view_w = w if w > 1 else 800
+        view_h = h if h > 1 else 600
+        content_w = max(1.0, max_x - min_x)
+        content_h = max(1.0, max_y - min_y)
+
+        zoom = min((view_w - 2 * margin) / content_w, (view_h - 2 * margin) / content_h)
+        self._zoom = max(MIN_ZOOM, min(MAX_ZOOM, zoom))
+        self._pan_x = view_w / 2 - ((min_x + max_x) / 2) * self._zoom
+        self._pan_y = view_h / 2 - ((min_y + max_y) / 2) * self._zoom
+        self._redraw_all()
+        self._set_status(f"Vista ajustada al mapa ({round(self._zoom * 100)}%).")
         return True
 
     def _leaf_box_width(self, text: str) -> float:
