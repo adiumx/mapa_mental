@@ -46,6 +46,12 @@ python3 main.py
   - La nota no se dibuja dentro del nodo a propósito: si el nodo creciera con
     su texto, se desacomodaría el resto del mapa (es el problema conocido de
     los *callouts* de otras herramientas).
+- **Panel de notas** (botón *Notas* o menú *Ver > Panel de notas*): abre a la
+  derecha una lista con todas las notas del mapa, con un buscador que filtra
+  por el título del nodo o por el texto de la nota. Un clic sobre una nota
+  lleva al nodo, centrándolo y expandiendo su rama si estaba colapsada; un
+  doble clic abre el editor. El panel queda abierto mientras recorrés el mapa,
+  así podés leer una nota sin perder de vista a qué idea pertenece.
 - **Colapsar / expandir ramas**: los nodos que tienen hijos muestran un círculo
   pequeño en su borde. Haz clic en él para ocultar o volver a mostrar toda su
   rama; cuando está colapsada, el círculo indica cuántos nodos quedaron

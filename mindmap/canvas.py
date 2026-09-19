@@ -708,6 +708,54 @@ class MindMapCanvas(tk.Frame):
             self._tooltip_window = None
         self._tooltip_node_id = None
 
+    def nodes_with_notes(self) -> list:
+        """(id, texto, nota, color) de los nodos que tienen nota, en orden de
+        creación (que en los mapas generados desde texto es el orden de lectura)."""
+        return [(n.id, n.text, n.note, n.color)
+                for n in sorted(self.nodes.values(), key=lambda n: n.id)
+                if n.note.strip()]
+
+    def center_on_node(self, node_id: int) -> None:
+        node = self.nodes.get(node_id)
+        if node is None:
+            return
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        sx = w / 2 if w > 1 else 400
+        sy = h / 2 if h > 1 else 300
+        self._pan_x = sx - node.x * self._zoom
+        self._pan_y = sy - node.y * self._zoom
+        self._redraw_all()
+
+    def _ancestors_of(self, node_id: int) -> list:
+        """Cadena de padres hasta la raíz, subiendo por las conexiones entrantes."""
+        chain = []
+        seen = {node_id}
+        current = node_id
+        while True:
+            incoming = self._incoming_connection(current)
+            if incoming is None:
+                break
+            parent = incoming.source_id
+            if parent in seen or parent not in self.nodes:
+                break
+            chain.append(parent)
+            seen.add(parent)
+            current = parent
+        return chain
+
+    def reveal_node(self, node_id: int) -> None:
+        """Deja el nodo a la vista: expande los ancestros que lo estuvieran
+        ocultando, lo selecciona y centra la vista en él."""
+        if node_id not in self.nodes:
+            return
+        collapsed = [nid for nid in self._ancestors_of(node_id) if self.nodes[nid].collapsed]
+        if collapsed:
+            self._snapshot_undo()
+            for ancestor in collapsed:
+                self.nodes[ancestor].collapsed = False
+        self.select_node(node_id)
+        self.center_on_node(node_id)
+
     def _move_group_for(self, node_ids: set) -> set:
         """Al arrastrar un nodo colapsado, su rama oculta tiene que viajar con él
         para que siga en su sitio cuando se vuelva a expandir."""

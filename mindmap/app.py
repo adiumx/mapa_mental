@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from .canvas import DEFAULT_PALETTE, DEFAULT_THEME, MindMapCanvas, PALETTES, THEMES
+from .notes_panel import NotesPanel
 
 
 class MindMapApp(tk.Tk):
@@ -17,12 +18,20 @@ class MindMapApp(tk.Tk):
         self.current_file = None
         self.status_var = tk.StringVar(value="Listo.")
 
+        self.notes_panel = None
+        self.notes_panel_var = tk.BooleanVar(value=False)
+
         self._build_menu()
         self._build_toolbar()
+        # El canvas vive dentro de un panel dividido para poder acoplarle el
+        # panel de notas a la derecha con un divisor arrastrable.
+        self._paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self.mind_canvas = MindMapCanvas(
-            self, on_status=self._set_status, on_connect_mode_change=self._on_connect_mode_change,
+            self._paned, on_status=self._set_status,
+            on_connect_mode_change=self._on_connect_mode_change,
         )
-        self.mind_canvas.pack(fill=tk.BOTH, expand=True)
+        self._paned.add(self.mind_canvas, weight=1)
+        self._paned.pack(fill=tk.BOTH, expand=True)
         self._build_status_bar()
 
         self.update_idletasks()  # asegura que el canvas ya tenga su tamaño real antes de centrar el nodo
@@ -50,6 +59,11 @@ class MindMapApp(tk.Tk):
         edit_menu.add_command(label="Deshacer", command=self._undo, accelerator="Ctrl+Z")
         edit_menu.add_command(label="Rehacer", command=self._redo, accelerator="Ctrl+Y")
         menubar.add_cascade(label="Editar", menu=edit_menu)
+
+        view_menu = tk.Menu(menubar, tearoff=0)
+        view_menu.add_checkbutton(label="Panel de notas", variable=self.notes_panel_var,
+                                   command=self._toggle_notes_panel)
+        menubar.add_cascade(label="Ver", menu=view_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="Instrucciones", command=self._show_help)
@@ -109,6 +123,23 @@ class MindMapApp(tk.Tk):
         ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(row2, text="Texto → Mapa", command=self._import_text_dialog).pack(side=tk.LEFT, padx=3)
         ttk.Button(row2, text="Exportar imagen", command=self.export_image).pack(side=tk.LEFT, padx=3)
+        ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(row2, text="Notas", command=self._toggle_notes_panel).pack(side=tk.LEFT, padx=3)
+
+    def _toggle_notes_panel(self):
+        if self.notes_panel is not None:
+            self._paned.forget(self.notes_panel)
+            self.notes_panel.destroy()
+            self.notes_panel = None
+            self.notes_panel_var.set(False)
+            self._set_status("Panel de notas cerrado.")
+            return
+        self.notes_panel = NotesPanel(self._paned, self.mind_canvas,
+                                       on_close=self._toggle_notes_panel)
+        self._paned.add(self.notes_panel, weight=0)
+        self.notes_panel.start()
+        self.notes_panel_var.set(True)
+        self._set_status("Panel de notas abierto: clic en una nota para ir a su nodo.")
 
     def _build_status_bar(self):
         bar = ttk.Frame(self, padding=(8, 3))
@@ -135,6 +166,9 @@ class MindMapApp(tk.Tk):
             "• Tecla Supr: eliminar lo seleccionado\n"
             "• Ctrl+Z / Ctrl+Y: deshacer / rehacer\n"
             "• Clic derecho en un nodo: convertirlo en nodo central o de rama\n\n"
+            "Ver > Panel de notas (o el botón \"Notas\"): abre a la derecha la lista de todas\n"
+            "las notas del mapa, con buscador. Un clic lleva al nodo (expandiendo su rama si\n"
+            "estaba colapsada) y un doble clic abre el editor de la nota.\n\n"
             "Archivo > Generar desde texto / Markdown: pega texto o Markdown y conviértelo\n"
             "automáticamente en un mapa mental gráfico (un nodo por oración, viñeta o título).\n\n"
             "Tema (barra de herramientas): cambia el estilo visual de los nodos y conexiones\n"
